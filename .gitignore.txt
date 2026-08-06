@@ -1,4 +1,0 @@
-Claves y tokens/
-files (1).zip
-.env
-__pycache__/

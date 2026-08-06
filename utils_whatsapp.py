@@ -14,7 +14,7 @@ class WhatsAppClient:
     def __init__(self):
         self.phone_id = WHATSAPP_PHONE_ID
         self.token = WHATSAPP_TOKEN
-        self.api_url = f"https://graph.instagram.com/v18.0/{self.phone_id}/messages"
+        self.api_url = f"https://graph.facebook.com/v18.0/{self.phone_id}/messages"
         self.headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
