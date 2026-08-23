@@ -12,7 +12,7 @@ class AstroAgent:
     
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-        self.model = "claude-opus-4.5"  # O el modelo que prefieras
+        self.model = "claude-3-5-sonnet-20241022"  # O el modelo que prefieras
     
     # ========================================================================
     # CARTAS NATALES
@@ -83,7 +83,7 @@ Proporciona en formato JSON:
   "zodiac_egyptian": "Signo egipcio",
   "ascending_sign": "Signo ascendente (ej: Leo)",
   "moon_sign": "Signo lunar",
-  "detailed_interpretation": "Párrafo de 5-6 líneas con análisis detallado incluyendo casas astrológicas"
+  "detailed_interpretation": "Párrafo de 40-45 líneas con análisis detallado incluyendo casas astrológicas"
 }}
 
 IMPORTANTE: Responde SOLO con el JSON, sin explicaciones adicionales."""
@@ -129,7 +129,8 @@ PREGUNTAS:
 Para cada pregunta:
 1. Elige una carta egipcia apropiada
 2. Da una respuesta clara (Sí / No)
-3. Proporciona una interpretación basada en la carta
+3. Da el significado de la carta elegida y su simbología. Ej: Te ha salido Osiris, dios del inframundo, la respuesta es un NO, ya que esta carta representa el fin de los ciclos y el cierre de etapas...
+4. Proporciona una interpretación basada en la carta
 
 Responde en formato JSON:
 {{
