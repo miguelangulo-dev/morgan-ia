@@ -12,7 +12,7 @@ class AstroAgent:
     
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
-        self.model = "claude-3-haiku-20240307"  # O el modelo que prefieras
+        self.model = "claude-sonnet-4-20250514"  
     
     # ========================================================================
     # CARTAS NATALES
