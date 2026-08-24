@@ -35,7 +35,7 @@ Proporciona en formato JSON:
   "zodiac_celtic": "Signo celta (ej: Roble)",
   "zodiac_mayan": "Signo maya",
   "zodiac_egyptian": "Signo egipcio",
-  "interpretation": "Párrafo de 3-4 líneas sobre las características principales"
+  "interpretation": "Párrafo de 30-35 líneas sobre las características principales"
 }}
 
 IMPORTANTE: Responde SOLO con el JSON, sin explicaciones adicionales."""
@@ -49,7 +49,7 @@ IMPORTANTE: Responde SOLO con el JSON, sin explicaciones adicionales."""
                 ]
             )
             
-            result_text = response.content[0].text
+            result_text = _extract_json(response.content[0].text)
             result = json.loads(result_text)
             logger.info(f"✅ Carta natal simple generada para {birth_date}")
             return result
