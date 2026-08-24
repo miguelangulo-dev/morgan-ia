@@ -2,6 +2,7 @@ import anthropic
 import os
 import json
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +44,21 @@ IMPORTANTE: Responde SOLO con el JSON, sin explicaciones adicionales."""
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1000,
+                max_tokens=4000,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
             
-            result_text = _extract_json(response.content[0].text)
-            result = json.loads(result_text)
+            raw_text = response.content[0].text.strip()
+            if "```" in raw_text:
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
+                if match:
+                    raw_text = match.group(1).strip()
+            print(f"DEBUG RAW CLAUDE: {raw_text[:500]}")
+            if not raw_text:
+                raise ValueError("Claude devolvió vacío")
+            result = json.loads(raw_text)
             logger.info(f"✅ Carta natal simple generada para {birth_date}")
             return result
         
@@ -91,14 +99,21 @@ IMPORTANTE: Responde SOLO con el JSON, sin explicaciones adicionales."""
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1200,
+                max_tokens=4000,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
             
-            result_text = response.content[0].text
-            result = json.loads(result_text)
+            raw_text = response.content[0].text.strip()
+            if "```" in raw_text:
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
+                if match:
+                    raw_text = match.group(1).strip()
+            print(f"DEBUG RAW CLAUDE: {raw_text[:500]}")
+            if not raw_text:
+                raise ValueError("Claude devolvió vacío")
+            result = json.loads(raw_text)
             logger.info(f"✅ Carta natal completa generada para {birth_date}")
             return result
         
@@ -155,14 +170,21 @@ IMPORTANTE:
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=2000,
+                max_tokens=4000,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
             
-            result_text = response.content[0].text
-            result = json.loads(result_text)
+            raw_text = response.content[0].text.strip()
+            if "```" in raw_text:
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
+                if match:
+                    raw_text = match.group(1).strip()
+            print(f"DEBUG RAW CLAUDE: {raw_text[:500]}")
+            if not raw_text:
+                raise ValueError("Claude devolvió vacío")
+            result = json.loads(raw_text)
             logger.info(f"✅ Tirada de tarot generada para {len(questions)} preguntas")
             return result
         
@@ -214,14 +236,21 @@ IMPORTANTE:
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1500,
+                max_tokens=4000,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
             
-            result_text = response.content[0].text
-            result = json.loads(result_text)
+            raw_text = response.content[0].text.strip()
+            if "```" in raw_text:
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw_text)
+                if match:
+                    raw_text = match.group(1).strip()
+            print(f"DEBUG RAW CLAUDE: {raw_text[:500]}")
+            if not raw_text:
+                raise ValueError("Claude devolvió vacío")
+            result = json.loads(raw_text)
             logger.info(f"✅ Afinidad zodiacal calculada: {user_zodiac} + {target_zodiac}")
             return result
         
