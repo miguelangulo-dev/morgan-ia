@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
 astro = AstroAgent()
 
-PRICE_MXN = 79  # mismo costo para carta completa o simple, según pediste
+PRICE_MXN = 49  # mismo costo para carta completa o simple, según pediste
 
 
 async def get_or_create_state(db: AsyncSession, phone: str) -> ConversationState:
