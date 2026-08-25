@@ -94,7 +94,7 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
     """
     Devuelve (pdf_path_or_url, cover_filename_used)
     """
-cover_file = _pick_random_cover(reading.get("zodiac_western", ""))
+    cover_file = _pick_random_cover(reading.get("zodiac_western", ""))
     cover_path = os.path.join(COVERS_DIR, cover_file)
 
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
