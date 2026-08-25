@@ -7,8 +7,8 @@ Arma el documento final de la carta astral:
 3. Convierte todo a un único PDF usando PDF.co
 4. Regresa la ruta/URL final y qué portada se usó (para guardarlo en DB)
 
-IMPORTANTE: Sube tus portadas ya diseñadas a /assets/covers/ (formato .docx o .pdf)
-y tus machotes de contenido a /assets/templates/ (formato .docx con placeholders
+IMPORTANTE: Sube tus portadas ya diseñadas a /Portadas/ (formato .docx o .pdf)
+y tus machotes de contenido a /Contenido/ (formato .docx con placeholders
 tipo {{nombre}}, {{fecha_nacimiento}}, {{signo_occidental}}, etc.)
 """
 
@@ -22,8 +22,8 @@ from pdf_co_integration import merge_docx_to_pdf, docx_to_pdf
 
 logger = logging.getLogger(__name__)
 
-COVERS_DIR = os.path.join(os.path.dirname(__file__), "assets", "covers")
-TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "assets", "templates")
+COVERS_DIR = os.path.join(os.path.dirname(__file__), "Portadas")
+TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "Contenido")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_pdfs")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -40,16 +40,21 @@ CONTENT_TEMPLATE_ORDER = [
 ]
 
 
-def _pick_random_cover() -> str:
-    """Elige un archivo de portada al azar de la carpeta de portadas."""
+def _pick_random_cover(signo: str = "") -> str:
+    """Elige una portada del signo, o al azar si no hay de ese signo."""
     if not os.path.isdir(COVERS_DIR):
         raise FileNotFoundError(f"No existe la carpeta de portadas: {COVERS_DIR}")
 
-    covers = [f for f in os.listdir(COVERS_DIR) if f.lower().endswith((".docx", ".pdf"))]
-    if not covers:
+    all_files = [f for f in os.listdir(COVERS_DIR) if f.lower().endswith((".jpeg", ".jpg", ".png", ".pdf"))]
+    if not all_files:
         raise FileNotFoundError(f"No hay portadas en {COVERS_DIR}. Sube al menos una.")
 
-    return random.choice(covers)
+    if signo:
+        filtered = [f for f in all_files if signo.lower() in f.lower()]
+        if filtered:
+            return random.choice(filtered)
+
+    return random.choice(all_files)
 
 
 def _fill_docx_template(template_path: str, output_path: str, context: dict):
@@ -89,7 +94,7 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
     """
     Devuelve (pdf_path_or_url, cover_filename_used)
     """
-    cover_file = _pick_random_cover()
+cover_file = _pick_random_cover(reading.get("zodiac_western", ""))
     cover_path = os.path.join(COVERS_DIR, cover_file)
 
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
