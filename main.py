@@ -140,24 +140,34 @@ async def stripe_webhook(request: Request):
 async def reset_chat(phone: str):
     from sqlalchemy import text
     logs = []
-    short_phone = phone[-10:]  # últimos 10 dígitos
+    short = phone[-10:]
     async with get_session() as db:
-        for q in [
-            f"DELETE FROM users WHERE phone_number LIKE '%{short_phone}%'",
-            f"DELETE FROM users WHERE phone LIKE '%{short_phone}%'",
-            "SELECT * FROM users LIMIT 1"
-        ]:
+        # Borra TODAS las tablas reales
+        queries = [
+            f"DELETE FROM conversation_states WHERE phone_number LIKE '%{short}%'",
+            f"DELETE FROM conversation_states WHERE phone_number = '{phone}'",
+            f"DELETE FROM conversation_state WHERE phone_number LIKE '%{short}%'",
+            f"DELETE FROM natal_charts WHERE phone_number LIKE '%{short}%'",
+            f"DELETE FROM natal_chart WHERE phone_number LIKE '%{short}%'",
+            f"DELETE FROM natal_charts WHERE phone_number = '{phone}'",
+            f"DELETE FROM users WHERE phone_number LIKE '%{short}%'",
+        ]
+        for q in queries:
             try:
-                result = await db.execute(text(q))
-                if "SELECT" in q:
-                    row = result.mappings().first()
-                    logs.append(f"TABLE users sample: {dict(row) if row else 'VACIA'}")
-                else:
-                    await db.commit()
-                    logs.append(f"OK: {q} - rows: {result.rowcount}")
+                r = await db.execute(text(q))
+                await db.commit()
+                logs.append(f"OK {q} -> {r.rowcount}")
             except Exception as e:
-                logs.append(f"FAIL: {q} -> {e}")
-                await db.rollback()
+                logs.append(f"FAIL {q} -> {str(e)[:200]}")
+                try: await db.rollback()
+                except: pass
+        
+        try:
+            r = await db.execute(text("SELECT current_step, phone_number FROM conversation_states LIMIT 3"))
+            rows = r.fetchall()
+            logs.append(f"Quedan states: {rows}")
+        except Exception as e:
+            logs.append(f"check: {e}")
     return {"logs": logs}
 
 # ===============================================================
