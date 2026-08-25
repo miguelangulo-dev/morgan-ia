@@ -140,24 +140,23 @@ async def stripe_webhook(request: Request):
 async def reset_chat(phone: str):
     from sqlalchemy import text
     logs = []
+    short_phone = phone[-10:]  # últimos 10 dígitos
     async with get_session() as db:
         for q in [
-            "DELETE FROM conversation WHERE phone = :p",
-            "DELETE FROM conversation WHERE phone_number = :p",
-            "DELETE FROM conversations WHERE phone = :p",
-            "DELETE FROM conversations WHERE phone_number = :p",
-            "DELETE FROM users WHERE phone = :p",
-            "DELETE FROM users WHERE phone_number = :p",
-            "DELETE FROM user WHERE phone = :p",
-            "DELETE FROM chat_sessions WHERE phone = :p",
-            "DELETE FROM sessions WHERE phone = :p",
+            f"DELETE FROM users WHERE phone_number LIKE '%{short_phone}%'",
+            f"DELETE FROM users WHERE phone LIKE '%{short_phone}%'",
+            "SELECT * FROM users LIMIT 1"
         ]:
             try:
-                await db.execute(text(q), {"p": phone})
-                await db.commit()
-                logs.append(f"OK: {q}")
+                result = await db.execute(text(q))
+                if "SELECT" in q:
+                    row = result.mappings().first()
+                    logs.append(f"TABLE users sample: {dict(row) if row else 'VACIA'}")
+                else:
+                    await db.commit()
+                    logs.append(f"OK: {q} - rows: {result.rowcount}")
             except Exception as e:
-                logs.append(f"FAIL: {q} -> {str(e)[:100]}")
+                logs.append(f"FAIL: {q} -> {e}")
                 await db.rollback()
     return {"logs": logs}
 
