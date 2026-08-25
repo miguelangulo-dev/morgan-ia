@@ -139,19 +139,27 @@ async def stripe_webhook(request: Request):
 @app.get("/reset/{phone}")
 async def reset_chat(phone: str):
     from sqlalchemy import text
+    logs = []
     async with get_session() as db:
-        await db.execute(text("DELETE FROM conversations WHERE phone_number = :p"), {"p": phone})
-        try:
-            await db.execute(text("DELETE FROM conversations WHERE phone = :p"), {"p": phone})
-        except:
-            pass
-        try:
-            await db.execute(text("DELETE FROM users WHERE phone_number = :p"), {"p": phone})
-            await db.execute(text("DELETE FROM users WHERE phone = :p"), {"p": phone})
-        except:
-            pass
-        await db.commit()
-    return {"status": f"Chat {phone} reseteado"}
+        for q in [
+            "DELETE FROM conversation WHERE phone = :p",
+            "DELETE FROM conversation WHERE phone_number = :p",
+            "DELETE FROM conversations WHERE phone = :p",
+            "DELETE FROM conversations WHERE phone_number = :p",
+            "DELETE FROM users WHERE phone = :p",
+            "DELETE FROM users WHERE phone_number = :p",
+            "DELETE FROM user WHERE phone = :p",
+            "DELETE FROM chat_sessions WHERE phone = :p",
+            "DELETE FROM sessions WHERE phone = :p",
+        ]:
+            try:
+                await db.execute(text(q), {"p": phone})
+                await db.commit()
+                logs.append(f"OK: {q}")
+            except Exception as e:
+                logs.append(f"FAIL: {q} -> {str(e)[:100]}")
+                await db.rollback()
+    return {"logs": logs}
 
 # ===============================================================
 # Health check
