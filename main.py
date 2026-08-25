@@ -133,10 +133,29 @@ async def stripe_webhook(request: Request):
     return JSONResponse(result, status_code=status_code)
 
 
-# ============================================================================
-# Health check
-# ============================================================================
+# ===============================================================
+# RESET MANUAL
+# ===============================================================
+@app.get("/reset/{phone}")
+async def reset_chat(phone: str):
+    from sqlalchemy import text
+    async with get_session() as db:
+        await db.execute(text("DELETE FROM conversations WHERE phone_number = :p"), {"p": phone})
+        try:
+            await db.execute(text("DELETE FROM conversations WHERE phone = :p"), {"p": phone})
+        except:
+            pass
+        try:
+            await db.execute(text("DELETE FROM users WHERE phone_number = :p"), {"p": phone})
+            await db.execute(text("DELETE FROM users WHERE phone = :p"), {"p": phone})
+        except:
+            pass
+        await db.commit()
+    return {"status": f"Chat {phone} reseteado"}
 
+# ===============================================================
+# Health check
+# ===============================================================
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "morgan-ia"}
