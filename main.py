@@ -132,44 +132,6 @@ async def stripe_webhook(request: Request):
 
     return JSONResponse(result, status_code=status_code)
 
-
-# ===============================================================
-# RESET MANUAL
-# ===============================================================
-@app.get("/reset/{phone}")
-async def reset_chat(phone: str):
-    from sqlalchemy import text
-    logs = []
-    short = phone[-10:]
-    async with get_session() as db:
-        # Borra TODAS las tablas reales
-        queries = [
-            f"DELETE FROM conversation_states WHERE phone_number LIKE '%{short}%'",
-            f"DELETE FROM conversation_states WHERE phone_number = '{phone}'",
-            f"DELETE FROM conversation_state WHERE phone_number LIKE '%{short}%'",
-            f"DELETE FROM natal_charts WHERE phone_number LIKE '%{short}%'",
-            f"DELETE FROM natal_chart WHERE phone_number LIKE '%{short}%'",
-            f"DELETE FROM natal_charts WHERE phone_number = '{phone}'",
-            f"DELETE FROM users WHERE phone_number LIKE '%{short}%'",
-        ]
-        for q in queries:
-            try:
-                r = await db.execute(text(q))
-                await db.commit()
-                logs.append(f"OK {q} -> {r.rowcount}")
-            except Exception as e:
-                logs.append(f"FAIL {q} -> {str(e)[:200]}")
-                try: await db.rollback()
-                except: pass
-        
-        try:
-            r = await db.execute(text("SELECT current_step, phone_number FROM conversation_states LIMIT 3"))
-            rows = r.fetchall()
-            logs.append(f"Quedan states: {rows}")
-        except Exception as e:
-            logs.append(f"check: {e}")
-    return {"logs": logs}
-
 # ===============================================================
 # Cleanup automático de inactivos
 # ===============================================================
