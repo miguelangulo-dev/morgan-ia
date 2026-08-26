@@ -41,18 +41,19 @@ CONTENT_TEMPLATE_ORDER = [
 
 
 def _pick_random_cover(signo: str = "") -> str:
-    """Elige una portada del signo, o al azar si no hay de ese signo."""
+    """Elige 1 de las 3 portadas del signo."""
     if not os.path.isdir(COVERS_DIR):
         raise FileNotFoundError(f"No existe la carpeta de portadas: {COVERS_DIR}")
 
     all_files = [f for f in os.listdir(COVERS_DIR) if f.lower().endswith((".jpeg", ".jpg", ".png", ".pdf"))]
     if not all_files:
-        raise FileNotFoundError(f"No hay portadas en {COVERS_DIR}. Sube al menos una.")
+        raise FileNotFoundError(f"No hay portadas en {COVERS_DIR}.")
 
     if signo:
         filtered = [f for f in all_files if signo.lower() in f.lower()]
         if filtered:
-            return random.choice(filtered)
+            # Solo 1 de 3 opciones por signo
+            return random.choice(filtered[:3] if len(filtered) >= 3 else filtered)
 
     return random.choice(all_files)
 
