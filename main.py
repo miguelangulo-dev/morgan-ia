@@ -171,6 +171,60 @@ async def reset_chat(phone: str):
     return {"logs": logs}
 
 # ===============================================================
+# Cleanup automático de inactivos
+# ===============================================================
+from datetime import datetime, timedelta
+from sqlalchemy import select, delete
+from models import ConversationState, NatalChart
+import os
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+async def cleanup_inactive():
+    async with get_session() as db:
+        now = datetime.utcnow()
+        limit_24h = now - timedelta(hours=24)
+        limit_48h = now - timedelta(hours=48)
+        limit_7d = now - timedelta(days=7)
+        
+        # 1. Conversaciones a medias >24h
+        await db.execute(delete(ConversationState).where(
+            ConversationState.updated_at < limit_24h,
+            ConversationState.current_step.notin_(["AWAITING_PAYMENT", "COMPLETED"])
+        ))
+        
+        # 2. No pagaron >48h -> borra PDF
+        result = await db.execute(select(NatalChart).where(
+            NatalChart.created_at < limit_48h, 
+            NatalChart.payment_status == "pending"
+        ))
+        for chart in result.scalars().all():
+            try:
+                if chart.pdf_path and os.path.exists(chart.pdf_path):
+                    os.remove(chart.pdf_path)
+            except: pass
+        
+        await db.execute(delete(NatalChart).where(
+            NatalChart.created_at < limit_48h, 
+            NatalChart.payment_status == "pending"
+        ))
+        await db.execute(delete(ConversationState).where(
+            ConversationState.updated_at < limit_48h,
+            ConversationState.current_step == "AWAITING_PAYMENT"
+        ))
+        
+        # 3. Completados >7 dias
+        await db.execute(delete(ConversationState).where(
+            ConversationState.updated_at < limit_7d,
+            ConversationState.current_step == "COMPLETED"
+        ))
+        await db.commit()
+        print(f"🧹 Cleanup: {now}")
+
+scheduler = AsyncIOScheduler()
+scheduler.add_job(cleanup_inactive, 'interval', hours=1)
+scheduler.start()
+
+# ===============================================================
 # Health check
 # ===============================================================
 @app.get("/health")
