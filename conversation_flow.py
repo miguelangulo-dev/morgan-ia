@@ -112,7 +112,13 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
             if birth_time is None:
                 await wa.send_text(phone, "No pude leer esa hora. Usa formato HH:MM (24h), ej: 14:30, o escribe 'no se'.")
                 return
-        await save_state(db, state, step="AWAITING_Q1", data_update={"birth_time": birth_time})
+        await save_state(db, state, step="AWAITING_BIRTH_PLACE", data_update={"birth_time": birth_time})
+        await wa.send_text(phone, "Gracias. Y en que ciudad naciste? (Ej: Celaya, Mexico)\n\nSi no lo sabes, escribe 'no se'.")
+        return
+
+    if step == "AWAITING_BIRTH_PLACE":
+        birth_place = None if _is_unknown(text_clean) else text_clean
+        await save_state(db, state, step="AWAITING_Q1", data_update={"birth_place": birth_place})
         await wa.send_text(
             phone,
             "Perfecto. Ahora viene la parte sagrada...\n\n"
