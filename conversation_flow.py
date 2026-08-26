@@ -148,8 +148,8 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
     # ------------------------------------------------------------------
     # Ya completado -> reinicia si quiere otra
     # ------------------------------------------------------------------
-    if step == "COMPLETED":
-        if _is_affirmative(text_clean) or "otra" in text_clean.lower():
+if step == "COMPLETED":
+        if _is_affirmative(text_clean) or "otra" in text_clean.lower() or "hola" in text_clean.lower():
             await save_state(db, state, step="MENU", data_update={})
             await handle_incoming_text(db, phone, "hola")
         else:
