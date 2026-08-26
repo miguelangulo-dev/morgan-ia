@@ -49,7 +49,7 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
             phone,
             "No es casualidad que llegaras aqui... El poder de las runas celtas nos une esta noche.\n"
             "El destino ya esta escrito en las estrellas, solo hay que leerlo.\n\n"
-            "Soy Morgan, guardiana de los velos."
+            "Soy Morgania, guardiana de los velos del mas alla."
         )
         await wa.send_text(
             phone,
@@ -113,7 +113,7 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
                 await wa.send_text(phone, "No pude leer esa hora. Usa formato HH:MM (24h), ej: 14:30, o escribe 'no se'.")
                 return
         await save_state(db, state, step="AWAITING_BIRTH_PLACE", data_update={"birth_time": birth_time})
-        await wa.send_text(phone, "Gracias. Y en que ciudad naciste? (Ej: Celaya, Mexico)\n\nSi no lo sabes, escribe 'no se'.")
+        await wa.send_text(phone, "Gracias... ahora dime... en donde naciste? (Ej: Celaya, Mexico)\n\nSi no lo sabes, escribe 'no se'.")
         return
 
     if step == "AWAITING_BIRTH_PLACE":
@@ -169,7 +169,7 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
             phone,
             "Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n\n"
             "Voy a generar tu carta astral completa, tu afinidad, tus 6 zodiacos y hare la tirada de tarot "
-            "para cada una de tus preguntas... dame un momento, esto toma magia."
+            "para cada una de tus preguntas... dame un momento, esto lleva un poco de magia."
         )
         await _generate_and_prepare_payment(db, state, phone)
         return
@@ -243,7 +243,7 @@ async def handle_button_reply(db: AsyncSession, phone: str, button_id: str):
         return
 
     if button_id == "otra_carta_no":
-        await wa.send_text(phone, "Gracias por confiar en Morgan. Que las runas te guien. Escribe 'hola' cuando quieras volver.")
+        await wa.send_text(phone, "Gracias por confiar en Morgania. Que las runas te guien. Escribe 'hola' cuando quieras volver.")
         return
 
     mapping = {
