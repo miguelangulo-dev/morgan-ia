@@ -108,12 +108,17 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
         "nombre": full_name,
         "fecha_nacimiento": birth_date,
         "hora_nacimiento": birth_time if birth_time else "No especificada",
+        "lugar_nacimiento": reading.get("birth_place", birth_place if 'birth_place' in locals() else "No especificado"),
         "signo_occidental": reading.get("zodiac_western", ""),
         "signo_chino": reading.get("zodiac_chinese", ""),
         "signo_celta": reading.get("zodiac_celtic", ""),
         "signo_maya": reading.get("zodiac_mayan", ""),
         "signo_egipcio": reading.get("zodiac_egyptian", ""),
+        "ascendente": reading.get("ascending_sign", ""),
+        "luna": reading.get("moon_sign", ""),
         "interpretacion": reading.get("interpretation", reading.get("detailed_interpretation", "")),
+        "tarot_lecturas": reading.get("tarot_readings", []),
+        "mensaje_final": reading.get("overall_message", ""),
         "fecha_lectura": datetime.utcnow().strftime("%d/%m/%Y"),
     }
 
