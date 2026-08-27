@@ -18,8 +18,6 @@ VERIFY_TOKEN = "morgania2026"
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -83,7 +81,6 @@ async def handle_webhook(request: Request):
         messages = value.get("messages", [])
 
         if not messages:
-            # notificación de estado (read/delivered), no un mensaje nuevo
             return JSONResponse({"status": "ok"})
 
         message = messages[0]
@@ -108,7 +105,6 @@ async def handle_webhook(request: Request):
                 await flow.handle_button_reply(db, from_phone, payload)
 
             else:
-                # audio, imagen, etc. -> aún no soportado en este flujo
                 logger.info(f"ℹ️ Tipo de mensaje no manejado todavía: {message_type}")
 
         return JSONResponse({"status": "ok"})
@@ -132,6 +128,71 @@ async def stripe_webhook(request: Request):
 
     return JSONResponse(result, status_code=status_code)
 
+
+# ============================================================================
+# PAGO EXITOSO - Esta es la página a la que regresa Stripe (buy.stripe.com)
+# Aquí también entregamos el PDF por si el webhook se demora
+# ============================================================================
+
+@app.get("/pago-exitoso")
+async def pago_exitoso(request: Request):
+    from sqlalchemy import select
+    from models import NatalChart
+    
+    chart_id = request.query_params.get("chart_id")
+    session_id = request.query_params.get("session_id")
+    
+    logger.info(f"💳 Usuario regresó de Stripe - chart_id={chart_id} session_id={session_id}")
+
+    if not chart_id:
+        return HTMLResponse("""
+        <html><body style="background:#0a0a0a;color:#FFD700;text-align:center;padding:50px;font-family:sans-serif">
+        <h1>✨ Pago Confirmado ✨</h1>
+        <p>Tu destino esta sellado. Regresa a WhatsApp, tu PDF ya se esta entregando.</p>
+        </body></html>
+        """)
+
+    async with get_session() as db:
+        result = await db.execute(select(NatalChart).where(NatalChart.id == chart_id))
+        chart = result.scalar_one_or_none()
+        if not chart:
+            logger.error(f"❌ Chart {chart_id} no encontrado en pago-exitoso")
+            return HTMLResponse("<h1>Pago recibido, pero no encontre tu carta. Escribe 'hola' en WhatsApp</h1>")
+
+        # Si aun no esta marcado como pagado, marcarlo y entregar
+        if chart.payment_status != "paid":
+            chart.payment_status = "paid"
+            await db.commit()
+            try:
+                await flow.deliver_paid_chart(db, chart)
+                logger.info(f"✅ PDF entregado desde /pago-exitoso para chart {chart_id}")
+            except Exception as e:
+                logger.error(f"❌ Error entregando PDF desde pago-exitoso: {e}", exc_info=True)
+
+    return HTMLResponse(f"""
+    <html>
+    <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+    <body style="background:#0a0a0a;color:#fff;text-align:center;padding:40px;font-family:sans-serif">
+        <div style="border:1px solid #FFD700;border-radius:16px;padding:30px;max-width:500px;margin:auto">
+            <h1 style="color:#FFD700">✨ Pago Confirmado ✨</h1>
+            <p style="font-size:18px">Tu destino esta sellado.</p>
+            <p>Regresa a WhatsApp, tu PDF ya se esta entregando.</p>
+            <p style="margin-top:20px;color:#888;font-size:12px">Chart: {chart_id}</p>
+        </div>
+    </body>
+    </html>
+    """)
+
+@app.get("/pago-cancelado")
+async def pago_cancelado(request: Request):
+    return HTMLResponse("""
+    <html><body style="background:#0a0a0a;color:#fff;text-align:center;padding:50px;font-family:sans-serif">
+    <h1 style="color:#FFD700">Pago cancelado</h1>
+    <p>Escribe 'hola' en WhatsApp para generar un nuevo link que no expira.</p>
+    </body></html>
+    """)
+
+
 # ===============================================================
 # Cleanup automático de inactivos
 # ===============================================================
@@ -148,13 +209,11 @@ async def cleanup_inactive():
         limit_48h = now - timedelta(hours=48)
         limit_7d = now - timedelta(days=7)
         
-        # 1. Conversaciones a medias >24h
         await db.execute(delete(ConversationState).where(
             ConversationState.updated_at < limit_24h,
             ConversationState.current_step.notin_(["AWAITING_PAYMENT", "COMPLETED"])
         ))
         
-        # 2. No pagaron >48h -> borra PDF
         result = await db.execute(select(NatalChart).where(
             NatalChart.created_at < limit_48h, 
             NatalChart.payment_status == "pending"
@@ -174,7 +233,6 @@ async def cleanup_inactive():
             ConversationState.current_step == "AWAITING_PAYMENT"
         ))
         
-        # 3. Completados >7 dias
         await db.execute(delete(ConversationState).where(
             ConversationState.updated_at < limit_7d,
             ConversationState.current_step == "COMPLETED"
@@ -193,10 +251,10 @@ scheduler.start()
 async def health_check():
     return {"status": "ok", "service": "morgan-ia"}
 
-@app.get("/pago-exitoso", response_class=HTMLResponse)
-async def pago_exitoso():
-    return """
-    <html><head><title>Pago Exitoso</title><meta name="viewport" content="width=device-width, initial-scale=1">
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "morgan-ia", "version": "a6a28650-fix-pago-exitoso"}
+
     <style>body{font-family:Arial;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}.card{background:#1a1a1a;padding:40px;border-radius:16px;text-align:center;border:1px solid #FFD700}h1{color:#FFD700}</style>
     </head><body><div class="card"><h1>✨ Pago Confirmado ✨</h1><p>Tu destino esta sellado.</p><p>Regresa a WhatsApp, tu PDF ya se esta entregando.</p></div></body></html>
     """
