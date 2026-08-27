@@ -1,6 +1,8 @@
-
 """
-FIX v7 - Elimina mensaje fantasma "Escribe 'hola'..." durante GENERATING
+conversation_flow v9 - Fix link expirado + regeneracion + diseño limpio
+- Si link expiro, genera nuevo PaymentLink automaticamente
+- Usa pdf_generator_LIMPIO_v9
+- Ya no manda Escribe hola fantasma en GENERATING
 """
 
 import logging
@@ -11,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import ConversationState, NatalChart
 from utils_whatsapp import WhatsAppClient
 from agentes_claude_astro import AstroAgent
-from pdf_generator import build_natal_chart_pdf
-from payment import create_payment_link
+from pdf_generator_LIMPIO_v9 import build_natal_chart_pdf
+from payment import create_payment_link, regenerate_payment_link_for_chart
 
 logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
@@ -24,14 +26,11 @@ async def get_or_create_state(db: AsyncSession, phone: str) -> ConversationState
     state = result.scalar_one_or_none()
     if not state:
         state = ConversationState(phone_number=phone, current_step="MENU", collected_data={})
-        db.add(state)
-        await db.commit()
-        await db.refresh(state)
+        db.add(state); await db.commit(); await db.refresh(state)
     return state
 
 async def save_state(db: AsyncSession, state: ConversationState, step: str = None, data_update: dict = None):
-    if step:
-        state.current_step = step
+    if step: state.current_step = step
     if data_update:
         merged = dict(state.collected_data or {})
         merged.update(data_update)
@@ -46,34 +45,38 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
     lower = text_clean.lower()
     data = state.collected_data or {}
 
-    # FIX CRITICO: Si esta en GENERATING, no mandes fallback "Escribe hola..."
+    # FIX GENERATING - no spamear Escribe hola
     if step == "GENERATING":
         if data.get("payment_link"):
-            # Ya termino de generar mientras llegaba otro webhook, reenvia link
-            await wa.send_text(phone, f"Tu destino esta sellado, {data.get('full_name','').split()[0]}.\n\nTu link sigue activo:\n{data.get('payment_link')}")
+            await wa.send_text(phone, f"Tu destino esta sellado, {data.get('full_name','').split()[0]}.\n\nTu link sigue activo (NO expira):\n{data.get('payment_link')}")
             await wa.send_buttons(phone, "Deseas continuar?", buttons=[{"id": "reenviar_link", "title": "Ya pague / Reenviar"}, {"id": "cancelar_compra", "title": "Cancelar"}])
             await save_state(db, state, step="AWAITING_PAYMENT")
             return
         else:
-            # Aun esta generando con Claude, no spamear
-            logger.info(f"Mensaje recibido en GENERATING para {phone}, ignorando para no spamear: {text_clean[:50]}")
+            logger.info(f"Ignorando mensaje en GENERATING para {phone}")
             return
 
-    # Si está en AWAITING_PAYMENT
     if step == "AWAITING_PAYMENT":
         if data.get("payment_link"):
-            if lower in ["hola", "ola", "hey", "pagar", "reenviar", "link", "ya pague", "ya pagué"]:
-                await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.\n\nTu link de pago:\n{data.get('payment_link')}")
-                await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
-                return
-            # Si manda otra cosa, no mandes "Escribe hola", ignora o reenvia link
-            if lower in ["hola", "ola", "hey"]:
-                await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.\nTu link:\n{data.get('payment_link')}")
-                await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
+            if lower in ["hola","ola","hey","pagar","reenviar","link","ya pague","ya pagué","pago"]:
+                # Si el link es de tipo checkout y pudo expirar, regeneramos uno nuevo persistente
+                try:
+                    # Regenera link persistente siempre al reenviar para evitar Todo listo
+                    chart_id = data.get("chart_id")
+                    if chart_id:
+                        new_link = await regenerate_payment_link_for_chart(chart_id, data.get('full_name',''), PRICE_MXN)
+                        await save_state(db, state, data_update={"payment_link": new_link, "payment_url": new_link})
+                        await wa.send_text(phone, f"Tu lectura sigue sellada, ${PRICE_MXN} MXN.\n\nTe genere un nuevo link que NO expira:\n{new_link}\n\nEn cuanto pagues te mando el PDF limpio de 6 hojas.")
+                    else:
+                        await wa.send_text(phone, f"Tu lectura sigue sellada, ${PRICE_MXN} MXN.\nTu link:\n{data.get('payment_link')}")
+                    await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
+                except Exception as e:
+                    logger.error(f"Error regenerando link: {e}")
+                    await wa.send_text(phone, f"Link anterior: {data.get('payment_link')}")
                 return
 
     if step == "COMPLETED":
-        if lower in ["hola", "ola", "hey", "otra", "nueva"]:
+        if lower in ["hola","ola","hey","otra","nueva"]:
             await save_state(db, state, step="MENU", data_update={})
             await handle_incoming_text(db, phone, "hola")
             return
@@ -136,48 +139,21 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
         await wa.send_text(phone, "Perfecto. Ahora viene la parte sagrada...\n\nPiensa bien. Puedes hacerme 5 preguntas al destino, y te respondere con un Si/No, revelandote la carta del tarot que salio y su simbologia en relacion a tu pregunta.\n\nPregunta 1 de 5: Cual es tu primera pregunta?")
         return
 
-    if step == "AWAITING_Q1":
+    if step in ["AWAITING_Q1","AWAITING_Q2","AWAITING_Q3","AWAITING_Q4","AWAITING_Q5"]:
+        q_num = int(step[-1])
         if len(text_clean) < 5:
-            await wa.send_text(phone, "Formulala un poco mas completa para que el tarot te entienda. Cual es tu pregunta 1?")
+            await wa.send_text(phone, f"Formulala un poco mas completa. Pregunta {q_num}?")
             return
-        await save_state(db, state, step="AWAITING_Q2", data_update={"q1": text_clean})
-        await wa.send_text(phone, "Anotada en las runas...\n\nPregunta 2 de 5:")
+        if q_num < 5:
+            await save_state(db, state, step=f"AWAITING_Q{q_num+1}", data_update={f"q{q_num}": text_clean})
+            msgs = ["Anotada en las runas...\n\nPregunta 2 de 5:", "Pregunta 3 de 5:", "Pregunta 4 de 5:", "Ultima... Pregunta 5 de 5:"]
+            await wa.send_text(phone, msgs[q_num-1])
+        else:
+            await save_state(db, state, step="GENERATING", data_update={"q5": text_clean})
+            await wa.send_text(phone, "Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n\nVoy a generar tu carta astral completa con el nuevo diseño limpio de 6 hojas... dame un momento, esto toma magia.")
+            await _generate_and_prepare_payment(db, state, phone)
         return
 
-    if step == "AWAITING_Q2":
-        if len(text_clean) < 5:
-            await wa.send_text(phone, "Formulala mejor. Pregunta 2?")
-            return
-        await save_state(db, state, step="AWAITING_Q3", data_update={"q2": text_clean})
-        await wa.send_text(phone, "Pregunta 3 de 5:")
-        return
-
-    if step == "AWAITING_Q3":
-        if len(text_clean) < 5:
-            await wa.send_text(phone, "Formulala mejor. Pregunta 3?")
-            return
-        await save_state(db, state, step="AWAITING_Q4", data_update={"q3": text_clean})
-        await wa.send_text(phone, "Pregunta 4 de 5:")
-        return
-
-    if step == "AWAITING_Q4":
-        if len(text_clean) < 5:
-            await wa.send_text(phone, "Formulala mejor. Pregunta 4?")
-            return
-        await save_state(db, state, step="AWAITING_Q5", data_update={"q4": text_clean})
-        await wa.send_text(phone, "Ultima... Pregunta 5 de 5:")
-        return
-
-    if step == "AWAITING_Q5":
-        if len(text_clean) < 5:
-            await wa.send_text(phone, "Formulala mejor. Pregunta 5?")
-            return
-        await save_state(db, state, step="GENERATING", data_update={"q5": text_clean})
-        await wa.send_text(phone, "Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n\nVoy a generar tu carta astral completa, tu afinidad, tus 5 zodiacos y hare la tirada de tarot para cada una de tus preguntas... dame un momento, esto toma magia.")
-        await _generate_and_prepare_payment(db, state, phone)
-        return
-
-    # Fallback solo si no esta en GENERATING
     await wa.send_text(phone, "Escribe 'hola' para abrir tu destino con Morgania.")
     await save_state(db, state, step="MENU")
 
@@ -187,31 +163,26 @@ async def handle_button_click(db: AsyncSession, phone: str, button_id: str):
         state = result.scalar_one_or_none()
         if state:
             await save_state(db, state, step="MENU", data_update={})
-        await wa.send_text(phone, "Lectura cancelada sin costo. El destino te esperara cuando estes lista. Escribe 'hola' para volver.")
+        await wa.send_text(phone, "Lectura cancelada sin costo. Escribe 'hola' para volver.")
         return
 
-    if button_id == "otra_carta_si":
+    if button_id == "reenviar_link":
         result = await db.execute(select(ConversationState).where(ConversationState.phone_number == phone))
         state = result.scalar_one_or_none()
-        if state:
-            await save_state(db, state, step="MENU", data_update={})
-        await handle_incoming_text(db, phone, "hola")
+        if state and state.collected_data.get("chart_id"):
+            try:
+                new_link = await regenerate_payment_link_for_chart(state.collected_data.get("chart_id"), state.collected_data.get("full_name",""), PRICE_MXN)
+                await save_state(db, state, data_update={"payment_link": new_link, "payment_url": new_link})
+                await wa.send_text(phone, f"Aqui tienes tu nuevo link que NO expira:\n{new_link}\n\nPaga ${PRICE_MXN} MXN y te mando tu PDF limpio de 6 hojas.")
+            except Exception as e:
+                logger.error(f"Error reenviando: {e}")
+                await wa.send_text(phone, f"Tu link anterior: {state.collected_data.get('payment_link')}\nSi dice Todo listo, escribe 'link' para generar uno nuevo que no expira.")
+        else:
+            await handle_incoming_text(db, phone, "link")
         return
 
-    if button_id == "otra_carta_no":
-        await wa.send_text(phone, "Gracias por confiar en Morgania. Que las runas te guien. Escribe 'hola' cuando quieras volver.")
-        return
-
-    mapping = {
-        "quiero_carta": "si",
-        "no_gracias": "no",
-        "reenviar_link": "pagar",
-        "genero_m": "Masculino",
-        "genero_f": "Femenino",
-        "genero_x": "Prefiero no decir",
-    }
-    text_equivalent = mapping.get(button_id, button_id)
-    await handle_incoming_text(db, phone, text_equivalent)
+    mapping = {"quiero_carta":"si","no_gracias":"no","genero_m":"Masculino","genero_f":"Femenino","genero_x":"Prefiero no decir"}
+    await handle_incoming_text(db, phone, mapping.get(button_id, button_id))
 
 async def handle_button_reply(db: AsyncSession, phone: str, button_id: str):
     return await handle_button_click(db, phone, button_id)
@@ -223,152 +194,66 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
     birth_time = data.get("birth_time")
     birth_place = data.get("birth_place")
     birth_gender = data.get("birth_gender")
-    questions = [data.get(f"q{i}") for i in range(1, 6) if data.get(f"q{i}")]
+    questions = [data.get(f"q{i}") for i in range(1,6) if data.get(f"q{i}")]
     
     try:
         if data.get("chart_id") and data.get("payment_link"):
-            logger.info(f"Pago ya generado para {phone}, evitando duplicado - REENVIANDO link existente")
-            await wa.send_text(
-                phone,
-                f"Tu destino ya estaba sellado, {full_name.split()[0] if full_name else ''}.\n\nTu link de pago sigue activo:\n{data.get('payment_link')}\n\nEn cuanto se confirme, te mando tu PDF."
-            )
-            await wa.send_buttons(
-                phone,
-                "Deseas continuar?",
-                buttons=[
-                    {"id": "reenviar_link", "title": "Ya pague / Reenviar"},
-                    {"id": "cancelar_compra", "title": "Cancelar"},
-                ],
-            )
-            await save_state(db, state, step="AWAITING_PAYMENT")
+            logger.info(f"Pago ya generado para {phone}, REGENERANDO link persistente")
+            new_link = await regenerate_payment_link_for_chart(data.get("chart_id"), full_name, PRICE_MXN)
+            await save_state(db, state, step="AWAITING_PAYMENT", data_update={"payment_link": new_link, "payment_url": new_link})
+            await wa.send_text(phone, f"Tu destino ya estaba sellado, {full_name.split()[0] if full_name else ''}.\n\nTu NUEVO link que NO expira:\n{new_link}")
+            await wa.send_buttons(phone, "Deseas continuar?", buttons=[{"id": "reenviar_link", "title": "Ya pague / Reenviar"}, {"id": "cancelar_compra", "title": "Cancelar"}])
             return
 
-        if birth_time:
-            reading = await astro.generate_natal_chart_complete(
-                birth_date=birth_date, 
-                birth_time=birth_time, 
-                birth_location=birth_place, 
-                questions=questions,
-                gender=birth_gender
-            )
-        else:
-            reading = await astro.generate_natal_chart_simple(
-                birth_date=birth_date, 
-                questions=questions,
-                birth_place=birth_place,
-                gender=birth_gender
-            )
-
+        reading = await astro.generate_natal_chart_complete(birth_date, birth_time, birth_location=birth_place, questions=questions, gender=birth_gender) if birth_time else await astro.generate_natal_chart_simple(birth_date, questions, birth_place, birth_gender)
         if not reading:
-            raise ValueError("Claude no devolvio lectura valida")
-
+            raise ValueError("Claude vacio")
         reading["birth_place"] = birth_place or "No especificado"
         reading["birth_gender"] = birth_gender or "No especificado"
 
-        pdf_path, cover_used = build_natal_chart_pdf(full_name=full_name, birth_date=birth_date, birth_time=birth_time, reading=reading)
+        pdf_path, cover_used = build_natal_chart_pdf(full_name, birth_date, birth_time, reading)
         
-        chart = NatalChart(
-            phone_number=phone,
-            full_name=full_name,
-            birth_date=birth_date,
-            birth_time=birth_time,
-            birth_place=birth_place,
-            gender=birth_gender,
-            zodiac_western=reading.get("zodiac_western"),
-            zodiac_chinese=reading.get("zodiac_chinese"),
-            zodiac_celtic=reading.get("zodiac_celtic"),
-            zodiac_mayan=reading.get("zodiac_mayan"),
-            zodiac_egyptian=reading.get("zodiac_egyptian"),
-            interpretation_json=reading,
-            cover_used=cover_used,
-            pdf_path=pdf_path,
-            pdf_ready=True,
-            payment_status="pending",
-        )
-        db.add(chart)
-        await db.commit()
-        await db.refresh(chart)
+        chart = NatalChart(phone_number=phone, full_name=full_name, birth_date=birth_date, birth_time=birth_time, birth_place=birth_place, gender=birth_gender,
+            zodiac_western=reading.get("zodiac_western"), zodiac_chinese=reading.get("zodiac_chinese"), zodiac_celtic=reading.get("zodiac_celtic"),
+            zodiac_mayan=reading.get("zodiac_mayan"), zodiac_egyptian=reading.get("zodiac_egyptian"),
+            interpretation_json=reading, cover_used=cover_used, pdf_path=pdf_path, pdf_ready=True, payment_status="pending")
+        db.add(chart); await db.commit(); await db.refresh(chart)
         
-        payment_url = await create_payment_link(
-            amount_mxn=PRICE_MXN,
-            reference_id=chart.id,
-            description=f"Carta Astral Completa + 5 Preguntas Tarot - {full_name}",
-        )
-        
+        payment_url = await create_payment_link(amount_mxn=PRICE_MXN, reference_id=chart.id, description=f"Carta Astral 6 Hojas + 5 Tarot - {full_name}")
         await save_state(db, state, step="AWAITING_PAYMENT", data_update={"chart_id": chart.id, "payment_link": payment_url, "payment_url": payment_url, "payment_sent_at": datetime.utcnow().isoformat()})
         
-        await wa.send_text(
-            phone,
-            f"Tu destino esta sellado, {full_name.split()[0]}.\n\n"
-            f"Eres {reading.get('zodiac_western')} en occidente, y en tu carta vi tu "
-            f"Celta, Maya, Chino y Egipcio alineados.\n\n"
-            f"Tus 5 respuestas del tarot ya estan canalizadas dentro del PDF, con la carta que salio "
-            f"y su simbologia explicada para cada pregunta.\n\n"
-            f"Para romper el sello y recibir tu PDF completo con la posicion de los planetas, "
-            f"realiza tu pago de ${PRICE_MXN} MXN aqui:\n\n{payment_url}\n\n"
-            f"En cuanto se confirme, te lo mando de inmediato aqui mismo."
-        )
-        await wa.send_buttons(
-            phone,
-            "Deseas continuar?",
-            buttons=[
-                {"id": "reenviar_link", "title": "Ya pague / Reenviar"},
-                {"id": "cancelar_compra", "title": "Cancelar"},
-            ],
-        )
+        await wa.send_text(phone, f"Tu destino esta sellado, {full_name.split()[0]}.\n\nEres {reading.get('zodiac_western')} en occidente, y vi tus 5 zodiacos alineados.\n\nTus 5 respuestas del tarot ya estan canalizadas en el PDF LIMPIO de 6 hojas con letra grande legible.\n\nPara romper el sello y recibir tu PDF completo, paga ${PRICE_MXN} MXN aqui (link que NO expira):\n\n{payment_url}\n\nEn cuanto se confirme, te lo mando de inmediato.")
+        await wa.send_buttons(phone, "Deseas continuar?", buttons=[{"id": "reenviar_link", "title": "Ya pague / Reenviar"}, {"id": "cancelar_compra", "title": "Cancelar"}])
     except Exception as e:
-        logger.error(f"Error generando carta astral: {str(e)}", exc_info=True)
-        await wa.send_text(phone, "Las runas se nublaron un momento... Intenta de nuevo en un momento escribiendo 'hola'.")
+        logger.error(f"Error generando: {str(e)}", exc_info=True)
+        await wa.send_text(phone, "Las runas se nublaron... Intenta de nuevo escribiendo 'hola'.")
         await save_state(db, state, step="MENU")
 
 async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
-    chart.payment_status = "paid"
-    await db.commit()
-    await wa.send_document(
-        chart.phone_number,
-        chart.pdf_path,
-        caption=f"Aqui esta tu destino completo, {chart.full_name.split()[0]}. Gracias por confiar en Morgania. Que las runas te guien.",
-    )
-    chart.delivered = True
-    await db.commit()
+    chart.payment_status = "paid"; await db.commit()
+    await wa.send_document(chart.phone_number, chart.pdf_path, caption=f"Aqui esta tu destino completo, {chart.full_name.split()[0]}. Nuevo diseño limpio de 6 hojas. Gracias por confiar en Morgania.")
+    chart.delivered = True; await db.commit()
     result = await db.execute(select(ConversationState).where(ConversationState.phone_number == chart.phone_number))
     state = result.scalar_one_or_none()
-    if state:
-        await save_state(db, state, step="COMPLETED")
+    if state: await save_state(db, state, step="COMPLETED")
 
 async def _ask_full_name(phone: str):
-    await wa.send_text(
-        phone,
-        "Perfecto. Para abrir tu destino necesito 3 datos:\n\n"
-        "1. Nombre completo\n2. Fecha de nacimiento\n3. Hora de nacimiento (si la sabes)\n\n"
-        "Empecemos: cual es tu nombre completo?"
-    )
+    await wa.send_text(phone, "Perfecto. Para abrir tu destino necesito 3 datos:\n\n1. Nombre completo\n2. Fecha de nacimiento\n3. Hora de nacimiento (si la sabes)\n\nEmpecemos: cual es tu nombre completo?")
 
 def _is_affirmative(text: str) -> bool:
-    return text.lower().strip() in {"si", "si!", "yes", "claro", "quiero", "ok", "va", "abrir", "abrir mi destino"}
-
+    return text.lower().strip() in {"si","si!","yes","claro","quiero","ok","va","abrir","abrir mi destino"}
 def _is_unknown(text: str) -> bool:
-    t = text.lower()
-    return "no s" in t or "no se" in t or "desconoc" in t
-
+    t = text.lower(); return "no s" in t or "no se" in t or "desconoc" in t
 def _parse_date(text: str):
-    for sep in ["/", "-"]:
+    for sep in ["/","-"]:
         parts = text.strip().split(sep)
-        if len(parts) == 3:
+        if len(parts)==3:
             try:
-                day, month, year = parts
-                d = datetime(int(year), int(month), int(day))
-                return d.strftime("%Y-%m-%d")
-            except ValueError:
-                continue
+                day,month,year=parts; from datetime import datetime; d=datetime(int(year),int(month),int(day)); return d.strftime("%Y-%m-%d")
+            except: continue
     return None
-
 def _parse_time(text: str):
-    text = text.strip()
+    text=text.strip()
     try:
-        t = datetime.strptime(text, "%H:%M")
-        return t.strftime("%H:%M")
-    except ValueError:
-        return None
-
-
+        from datetime import datetime; t=datetime.strptime(text,"%H:%M"); return t.strftime("%H:%M")
+    except: return None
