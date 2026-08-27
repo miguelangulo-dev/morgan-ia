@@ -225,11 +225,6 @@ if not reading:
 reading["birth_place"] = birth_place or "No especificado"
 reading["birth_gender"] = birth_gender or "No especificado"
 
-pdf_path, cover_used = build_natal_chart_pdf(...)
-        if birth_place:
-            reading["birth_place"] = birth_place
-        if birth_gender:
-            reading["birth_gender"] = birth_gender
         pdf_path, cover_used = build_natal_chart_pdf(full_name=full_name, birth_date=birth_date, birth_time=birth_time, reading=reading)
         # SIN AZTECA - solo 5 zodiacos que existen en DB
         chart = NatalChart(phone_number=phone, full_name=full_name, birth_date=birth_date, birth_time=birth_time, zodiac_western=reading.get("zodiac_western"), zodiac_chinese=reading.get("zodiac_chinese"), zodiac_celtic=reading.get("zodiac_celtic"), zodiac_mayan=reading.get("zodiac_mayan"), zodiac_egyptian=reading.get("zodiac_egyptian"), interpretation_json=reading, cover_used=cover_used, pdf_path=pdf_path, pdf_ready=True, payment_status="pending")
