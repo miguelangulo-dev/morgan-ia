@@ -1,7 +1,6 @@
 
 """
-FIX v6 - Reenvía link existente y arregla ciclo hola
-Basado en v5 - agrega manejo GENERATING + COMPLETED + reenvío
+FIX v7 - Elimina mensaje fantasma "Escribe 'hola'..." durante GENERATING
 """
 
 import logging
@@ -45,26 +44,35 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
     step = state.current_step
     text_clean = text.strip()
     lower = text_clean.lower()
+    data = state.collected_data or {}
 
-    # Si está en pago, cualquier hola le reenvía el link
-    if step in ["AWAITING_PAYMENT", "GENERATING"]:
-        data = state.collected_data or {}
+    # FIX CRITICO: Si esta en GENERATING, no mandes fallback "Escribe hola..."
+    if step == "GENERATING":
+        if data.get("payment_link"):
+            # Ya termino de generar mientras llegaba otro webhook, reenvia link
+            await wa.send_text(phone, f"Tu destino esta sellado, {data.get('full_name','').split()[0]}.\n\nTu link sigue activo:\n{data.get('payment_link')}")
+            await wa.send_buttons(phone, "Deseas continuar?", buttons=[{"id": "reenviar_link", "title": "Ya pague / Reenviar"}, {"id": "cancelar_compra", "title": "Cancelar"}])
+            await save_state(db, state, step="AWAITING_PAYMENT")
+            return
+        else:
+            # Aun esta generando con Claude, no spamear
+            logger.info(f"Mensaje recibido en GENERATING para {phone}, ignorando para no spamear: {text_clean[:50]}")
+            return
+
+    # Si está en AWAITING_PAYMENT
+    if step == "AWAITING_PAYMENT":
         if data.get("payment_link"):
             if lower in ["hola", "ola", "hey", "pagar", "reenviar", "link", "ya pague", "ya pagué"]:
                 await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.\n\nTu link de pago:\n{data.get('payment_link')}")
                 await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
-                await save_state(db, state, step="AWAITING_PAYMENT")
                 return
-            # si manda cualquier otra cosa, no lo ignoramos, le reenviamos igual
-            if data.get("payment_link") and data.get("payment_sent_at"):
-                if "pagar" not in lower and "reenviar" not in lower and "link" not in lower and "ya pague" not in lower and "ya pagué" not in lower:
-                    if lower in ["hola", "ola", "hey"]:
-                        await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.\nTu link:\n{data.get('payment_link')}")
-                        await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
-                        return
+            # Si manda otra cosa, no mandes "Escribe hola", ignora o reenvia link
+            if lower in ["hola", "ola", "hey"]:
+                await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.\nTu link:\n{data.get('payment_link')}")
+                await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
+                return
 
     if step == "COMPLETED":
-        # permite reiniciar ciclo
         if lower in ["hola", "ola", "hey", "otra", "nueva"]:
             await save_state(db, state, step="MENU", data_update={})
             await handle_incoming_text(db, phone, "hola")
@@ -169,6 +177,7 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
         await _generate_and_prepare_payment(db, state, phone)
         return
 
+    # Fallback solo si no esta en GENERATING
     await wa.send_text(phone, "Escribe 'hola' para abrir tu destino con Morgania.")
     await save_state(db, state, step="MENU")
 
@@ -219,7 +228,6 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
     try:
         if data.get("chart_id") and data.get("payment_link"):
             logger.info(f"Pago ya generado para {phone}, evitando duplicado - REENVIANDO link existente")
-            # FIX: reenviamos link existente en lugar de quedarnos callados
             await wa.send_text(
                 phone,
                 f"Tu destino ya estaba sellado, {full_name.split()[0] if full_name else ''}.\n\nTu link de pago sigue activo:\n{data.get('payment_link')}\n\nEn cuanto se confirme, te mando tu PDF."
@@ -362,4 +370,5 @@ def _parse_time(text: str):
         return t.strftime("%H:%M")
     except ValueError:
         return None
+
 
