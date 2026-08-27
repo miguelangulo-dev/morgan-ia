@@ -76,8 +76,10 @@ class NatalChart(Base):
     zodiac_chinese = Column(String(50))
     zodiac_celtic = Column(String(50))
     zodiac_mayan = Column(String(50))
-    zodiac_egyptian = Column(String(50))
-    interpretation_json = Column(JSON)   # todo el contenido generado por Claude, por sección
+    zodiac_egyptian = Column(String(50), nullable=True)
+    birth_place = Column(String(255), nullable=True)  # NUEVO
+    gender = Column(String(50), nullable=True)  # NUEVO - Masculino/Femenino/Prefiero no responder
+    interpretation_json = Column(JSON, nullable=True)
     cover_used = Column(String(200), nullable=True)  # nombre del archivo de portada elegido
     pdf_path = Column(String, nullable=True)   # ruta/URL del PDF ya armado
     pdf_ready = Column(Boolean, default=False)
