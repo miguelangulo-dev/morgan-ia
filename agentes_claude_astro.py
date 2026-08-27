@@ -1,4 +1,3 @@
-
 """
 Agente Claude FINAL - FIX Railway Crashed + birth_place + gender + sin azteca + planetary_positions
 Max_tokens 4000, prompts 12-15 lineas, tarot 5-6 lineas
@@ -55,7 +54,7 @@ Para cada pregunta, incluye en el JSON final un objeto tarot con:
 - question, card, answer (Si/No), interpretation de 4-5 lineas explicando carta y simbologia
 """
 
-        prompt = f"""Eres Morgan, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA.
+        prompt = f"""Eres Morgania, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA.
 
 FECHA DE NACIMIENTO: {birth_date}
 LUGAR: {birth_place or "No especificado"}
@@ -140,7 +139,7 @@ IMPORTANTE: Para CADA una de esas 5 preguntas debes hacer tirada tarot egipcio:
 - Relaciona con su pregunta especifica
 """
 
-        prompt = f"""Eres Morgan, guardiana de los velos, experta en astrologia, tarot egipcio y zodiacos ancestrales.
+        prompt = f"""Eres Morgania, guardiana de los velos del tiempo y el destino, experta en astrologia, tarot egipcio y zodiacos ancestrales.
 
 DATOS:
 FECHA: {birth_date}
