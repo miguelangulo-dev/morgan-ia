@@ -1,29 +1,19 @@
 """
-pdf_generator.py - VERSIÓN JPEG - Usa tus 4 fondos de Contenido/
-1 Escencia solar.jpeg -> Carta Astral
-2 Afinidades Zodiacales.jpeg -> Afinidades
-3 Tarot Egipcio.jpeg -> Tarot
-4 Posplanetas.jpeg -> Cierre / Planetas + Mensaje final
-
-Usa ReportLab para escribir encima del JPEG
+pdf_generator.py - VERSION SIN reportlab - Solo Pillow (para fix crash Railway)
+Escribe nombre del planeta en ubicacion aproximada SOLO en pagina 4 Posplanetas
 """
 
 import os
 import logging
 from datetime import datetime
-from PIL import Image
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-COVERS_DIR = os.path.join(os.path.dirname(__file__), "Portadas")
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "Contenido")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_pdfs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Tu orden nuevo - exactamente tus 4 archivos
 CONTENT_JPEG_ORDER = [
     "1 Escencia solar.jpeg",
     "2 Afinidades Zodiacales.jpeg",
@@ -31,21 +21,31 @@ CONTENT_JPEG_ORDER = [
     "4 Posplanetas.jpeg",
 ]
 
-def _wrap_text(text, max_chars=90):
-    """Corta texto largo en lineas de max_chars sin cortar palabras"""
-    if not text:
-        return []
+PLANET_COORDS_ESTIMADAS = {
+    "sol": (0.50, 0.38),
+    "luna": (0.65, 0.32),
+    "mercurio": (0.38, 0.42),
+    "venus": (0.42, 0.30),
+    "marte": (0.60, 0.45),
+    "jupiter": (0.72, 0.40),
+    "saturno": (0.30, 0.35),
+    "urano": (0.55, 0.55),
+    "neptuno": (0.68, 0.60),
+    "pluton": (0.35, 0.52),
+    "ascendente": (0.20, 0.50),
+    "medio_cielo": (0.50, 0.22),
+}
+
+def _wrap(text, max_chars=85):
+    if not text: return []
     words = text.split()
-    lines = []
-    current = ""
+    lines, cur = [], ""
     for w in words:
-        if len(current + " " + w) <= max_chars:
-            current = (current + " " + w).strip()
+        if len(cur + " " + w) <= max_chars:
+            cur = (cur + " " + w).strip()
         else:
-            lines.append(current)
-            current = w
-    if current:
-        lines.append(current)
+            lines.append(cur); cur = w
+    if cur: lines.append(cur)
     return lines
 
 def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, reading: dict) -> tuple:
@@ -53,7 +53,6 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
     safe_name = "".join(c for c in full_name if c.isalnum() or c == " ").strip().replace(" ", "_")
     pdf_path = os.path.join(OUTPUT_DIR, f"{safe_name}_{timestamp}.pdf")
 
-    # Datos de Claude
     western = reading.get("zodiac_western", "")
     chinese = reading.get("zodiac_chinese", "")
     celtic = reading.get("zodiac_celtic", "")
@@ -66,114 +65,88 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
     overall = reading.get("overall_message", "")
     birth_place = reading.get("birth_place", "No especificado")
     gender = reading.get("birth_gender", "No especificado")
+    planets = reading.get("planetary_positions", {})
 
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    width, height = A4
+    annotated_pages = []
 
     for jpeg_name in CONTENT_JPEG_ORDER:
         jpeg_path = os.path.join(TEMPLATES_DIR, jpeg_name)
         if not os.path.exists(jpeg_path):
             logger.warning(f"Falta fondo: {jpeg_path}")
             continue
+        
+        img = Image.open(jpeg_path).convert("RGB")
+        # Redimensionar a A4 aprox para calidad
+        img = img.resize((1240, 1754))  # A4 300dpi aprox
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            # Intenta fuente bold, si no existe usa default
+            font_bold = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
+            font_reg = ImageFont.truetype("DejaVuSans.ttf", 22)
+            font_small = ImageFont.truetype("DejaVuSans.ttf", 18)
+        except:
+            font_bold = ImageFont.load_default()
+            font_reg = ImageFont.load_default()
+            font_small = ImageFont.load_default()
 
-        # Fondo JPEG pantalla completa
-        c.drawImage(ImageReader(jpeg_path), 0, 0, width=width, height=height, preserveAspectRatio=True, anchor='c')
-
-        # --- MAPEO DE CONTENIDO POR PAGINA ---
-        c.setFillColorRGB(0.1, 0.1, 0.1)  # texto casi negro, cambia a blanco si tu jpeg es oscuro: 1,1,1
-        c.setFont("Helvetica", 10)
+        W, H = img.size
 
         if "1 Escencia" in jpeg_name:
-            # PAGINA 1 - ESENCIA SOLAR = carta astral principal
-            y = height - 120
-            c.setFont("Helvetica-Bold", 16)
-            c.drawString(50, y, f"{full_name} - {western}")
-            y -= 20
-            c.setFont("Helvetica", 10)
-            c.drawString(50, y, f"Fecha: {birth_date}  Hora: {birth_time}  Lugar: {birth_place}  Genero: {gender}")
-            y -= 15
-            c.drawString(50, y, f"Ascendente: {asc}  Luna: {moon}")
-            y -= 25
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(50, y, "Interpretacion:")
-            y -= 15
-            c.setFont("Helvetica", 9)
-            for line in _wrap_text(interp, 95)[:25]:  # 12-15 lineas de Claude, mostramos max 25 lineas fisicas
-                c.drawString(50, y, line)
-                y -= 12
-                if y < 60:
-                    break
+            draw.text((60, 140), f"{full_name} - {western}", fill=(20,20,20), font=font_bold)
+            draw.text((60, 190), f"Fecha: {birth_date}  Hora: {birth_time}", fill=(20,20,20), font=font_reg)
+            draw.text((60, 220), f"Lugar: {birth_place}  Genero: {gender}", fill=(20,20,20), font=font_reg)
+            draw.text((60, 250), f"Asc: {asc}  Luna: {moon}", fill=(20,20,20), font=font_reg)
+            y = 300
+            for line in _wrap(interp, 75)[:18]:
+                draw.text((60, y), line, fill=(20,20,20), font=font_small)
+                y += 26
 
         elif "2 Afinidades" in jpeg_name:
-            # PAGINA 2 - AFINIDADES ZODIACALES
-            y = height - 150
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(50, y, "Afinidades Zodiacales")
-            y -= 25
-            c.setFont("Helvetica", 11)
-            c.drawString(50, y, f"Occidental: {western}")
-            y -= 18
-            c.drawString(50, y, f"Chino: {chinese}")
-            y -= 18
-            c.drawString(50, y, f"Celta: {celtic}")
-            y -= 18
-            c.drawString(50, y, f"Maya: {mayan}")
-            y -= 18
-            c.drawString(50, y, f"Egipcio: {egyptian}")
-            y -= 30
-            # aqui puedes agregar compatibilidad si tienes
-            c.setFont("Helvetica", 9)
-            c.drawString(50, y, "Cada signo aporta una energia ancestral que potencia tu destino.")
+            y = 200
+            draw.text((60, y), "Afinidades Zodiacales", fill=(20,20,20), font=font_bold); y+=50
+            for label, val in [("Occidental", western), ("Chino", chinese), ("Celta", celtic), ("Maya", mayan), ("Egipcio", egyptian)]:
+                draw.text((60, y), f"{label}: {val}", fill=(20,20,20), font=font_reg); y+=35
 
         elif "3 Tarot" in jpeg_name:
-            # PAGINA 3 - TAROT EGIPCIO - 5 preguntas
-            y = height - 120
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(50, y, "Tarot Egipcio - 5 Respuestas del Destino")
-            y -= 20
+            y = 150
+            draw.text((60, y), "Tarot Egipcio", fill=(20,20,20), font=font_bold); y+=50
             for i, t in enumerate(tarot_list[:5], 1):
-                if y < 80:
-                    break
-                c.setFont("Helvetica-Bold", 10)
-                q = t.get('question','')[:90]
-                c.drawString(50, y, f"{i}. {q}")
-                y -= 12
-                c.setFont("Helvetica", 9)
-                c.drawString(60, y, f"Carta: {t.get('card','')} | Respuesta: {t.get('answer','')}")
-                y -= 12
-                for line in _wrap_text(t.get('interpretation',''), 90)[:5]:
-                    c.drawString(60, y, line)
-                    y -= 11
-                y -= 10
+                draw.text((60, y), f"{i}. {t.get('question','')[:70]}", fill=(20,20,20), font=font_small); y+=25
+                draw.text((70, y), f"{t.get('card','')} - {t.get('answer','')}", fill=(80,80,80), font=font_small); y+=25
+                for line in _wrap(t.get('interpretation',''), 70)[:2]:
+                    draw.text((70, y), line, fill=(30,30,30), font=font_small); y+=22
+                y+=10
+                if y > H-100: break
 
-        elif "4 Posplanetas" in jpeg_name or "Posplanet" in jpeg_name:
-            # PAGINA 4 - POSICION PLANETAS + CIERRE
-            y = height - 130
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(50, y, "Posicion Planetaria y Mensaje Final")
-            y -= 25
-            c.setFont("Helvetica", 10)
-            c.drawString(50, y, f"Nombre: {full_name}")
-            y -= 15
-            c.drawString(50, y, f"Signo: {western} | Asc: {asc} | Luna: {moon}")
-            y -= 25
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(50, y, "Mensaje del Universo:")
-            y -= 15
-            c.setFont("Helvetica", 10)
-            for line in _wrap_text(overall, 90)[:12]:
-                c.drawString(50, y, line)
-                y -= 13
+        elif "4 Posplanetas" in jpeg_name:
+            # SOLO AQUI: nombre del planeta en ubicacion aproximada
+            for planet_key, (x_rel, y_rel) in PLANET_COORDS_ESTIMADAS.items():
+                pos_text = planets.get(planet_key, "")
+                x = int(W * x_rel)
+                y = int(H * (1 - y_rel))  # PIL y=0 arriba, por eso invertimos
+                # Dibujar etiqueta dorada con fondo semitransparente
+                label = planet_key.upper()
+                # fondo
+                draw.rectangle([x-50, y-15, x+50, y+10], fill=(0,0,0,120))
+                draw.text((x-40, y-12), label, fill=(255,215,0), font=font_bold)
+                if pos_text:
+                    draw.text((x-45, y+12), pos_text[:20], fill=(255,255,255), font=font_small)
+            
+            # Mensaje final abajo
+            draw.text((60, H-200), f"Mensaje Final: {overall[:120]}...", fill=(255,255,255), font=font_reg)
 
-        c.showPage()
+        annotated_pages.append(img)
 
-    c.save()
-    logger.info(f"PDF JPEG generado: {pdf_path}")
+    if not annotated_pages:
+        raise FileNotFoundError("No hay paginas para PDF")
 
-    # Portada random como antes
-    cover_file = "default_cover.jpg"
-    try:
-        from final_pdf_generator_v2 import _pick_random_cover
+    # Guardar como PDF multipagina con Pillow (no necesita reportlab)
+    annotated_pages[0].save(pdf_path, "PDF", resolution=100.0, save_all=True, append_images=annotated_pages[1:])
+    
+    logger.info(f"PDF Pillow con posplanetas generado: {pdf_path}")
+    return pdf_path, "4 Posplanetas.jpeg"
+
         cover_file = _pick_random_cover(western)
     except:
         pass
