@@ -214,12 +214,18 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
         if data.get("chart_id") and data.get("payment_link"):
             logger.info(f"Pago ya generado para {phone}, evitando duplicado")
             return
-        if birth_time:
-            reading = await astro.generate_natal_chart_complete(birth_date, birth_time, birth_location=birth_place, questions=questions)
-        else:
-            reading = await astro.generate_natal_chart_simple(birth_date, questions=questions)
-        if not reading:
-            raise ValueError("Claude no devolvio lectura valida")
+if birth_time:
+    reading = await astro.generate_natal_chart_complete(birth_date, birth_time, birth_location=None, questions=questions)
+else:
+    reading = await astro.generate_natal_chart_simple(birth_date, questions=questions)
+
+if not reading:
+    raise ValueError("Claude no devolvio lectura valida")
+
+reading["birth_place"] = birth_place or "No especificado"
+reading["birth_gender"] = birth_gender or "No especificado"
+
+pdf_path, cover_used = build_natal_chart_pdf(...)
         if birth_place:
             reading["birth_place"] = birth_place
         if birth_gender:
