@@ -1,178 +1,181 @@
 """
-pdf_generator.py - FIX DEFINITIVO - scorpio/escorpio + sin azteca
-Usa Portadas/ y Contenido/
+pdf_generator.py - VERSIÓN JPEG - Usa tus 4 fondos de Contenido/
+1 Escencia solar.jpeg -> Carta Astral
+2 Afinidades Zodiacales.jpeg -> Afinidades
+3 Tarot Egipcio.jpeg -> Tarot
+4 Posplanetas.jpeg -> Cierre / Planetas + Mensaje final
+
+Usa ReportLab para escribir encima del JPEG
 """
 
 import os
-import random
 import logging
-import unicodedata
 from datetime import datetime
-from docx import Document
-
-from pdf_co_integration import merge_docx_to_pdf, docx_to_pdf
+from PIL import Image
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
 
 logger = logging.getLogger(__name__)
 
 COVERS_DIR = os.path.join(os.path.dirname(__file__), "Portadas")
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "Contenido")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_pdfs")
-
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-CONTENT_TEMPLATE_ORDER = [
-    "contenido_signo_occidental.docx",
-    "contenido_signo_chino.docx",
-    "contenido_signo_celta.docx",
-    "contenido_signo_maya.docx",
-    "contenido_signo_egipcio.docx",
-    "cierre.docx",
+# Tu orden nuevo - exactamente tus 4 archivos
+CONTENT_JPEG_ORDER = [
+    "1 Escencia solar.jpeg",
+    "2 Afinidades Zodiacales.jpeg",
+    "3 Tarot Egipcio.jpeg",
+    "4 Posplanetas.jpeg",
 ]
 
-# Mapa para que escorpio = scorpio, tauro = taurus, etc
-SIGNOS_MAP = {
-    "aries": ["aries"],
-    "tauro": ["tauro", "taurus"],
-    "taurus": ["tauro", "taurus"],
-    "geminis": ["geminis", "gemini"],
-    "gemini": ["geminis", "gemini"],
-    "cancer": ["cancer"],
-    "leo": ["leo"],
-    "virgo": ["virgo"],
-    "libra": ["libra"],
-    "escorpio": ["escorpio", "scorpio", "escorpion"],
-    "scorpio": ["escorpio", "scorpio", "escorpion"],
-    "escorpion": ["escorpio", "scorpio"],
-    "sagitario": ["sagitario", "sagittarius"],
-    "sagittarius": ["sagitario"],
-    "capricornio": ["capricornio", "capricorn"],
-    "capricorn": ["capricornio", "capricorn"],
-    "acuario": ["acuario", "aquarius"],
-    "aquarius": ["acuario", "aquarius"],
-    "piscis": ["piscis", "pisces"],
-    "pisces": ["piscis", "pisces"],
-}
-
-def normalize_text(s: str) -> str:
-    if not s:
-        return ""
-    nfkd = unicodedata.normalize('NFKD', s.lower())
-    return "".join([c for c in nfkd if not unicodedata.combining(c)])
-
-def _pick_random_cover(signo: str = "") -> str:
-    if not os.path.isdir(COVERS_DIR):
-        raise FileNotFoundError(f"No existe la carpeta de portadas: {COVERS_DIR}")
-
-    all_files = [f for f in os.listdir(COVERS_DIR) if f.lower().endswith((".jpeg", ".jpg", ".png", ".pdf", ".docx"))]
-    if not all_files:
-        raise FileNotFoundError(f"No hay portadas en {COVERS_DIR}.")
-
-    if signo:
-        signo_norm = normalize_text(signo)
-        variantes = SIGNOS_MAP.get(signo_norm, [signo_norm])
-        filtered = []
-        for f in all_files:
-            f_norm = normalize_text(f)
-            if any(v in f_norm for v in variantes):
-                filtered.append(f)
-        
-        if filtered:
-            pool = filtered[:3] if len(filtered) >= 3 else filtered
-            chosen = random.choice(pool)
-            logger.info(f"Portada elegida para {signo} ({signo_norm}) -> {chosen} de {filtered}")
-            return chosen
+def _wrap_text(text, max_chars=90):
+    """Corta texto largo en lineas de max_chars sin cortar palabras"""
+    if not text:
+        return []
+    words = text.split()
+    lines = []
+    current = ""
+    for w in words:
+        if len(current + " " + w) <= max_chars:
+            current = (current + " " + w).strip()
         else:
-            logger.warning(f"No hay portada para signo {signo} ({signo_norm}) variantes {variantes}. Archivos: {all_files[:15]} -> random")
-
-    return random.choice(all_files)
-
-def _fill_docx_template(template_path: str, output_path: str, context: dict):
-    doc = Document(template_path)
-
-    def replace_in_paragraph(paragraph):
-        for key, value in context.items():
-            placeholder = "{{" + key + "}}"
-            if placeholder in paragraph.text:
-                if isinstance(value, list):
-                    if "tarot" in key:
-                        val_str = "\n\n".join([f"Pregunta {i+1}: {r.get('question','')}\nCarta: {r.get('card','')} - Respuesta: {r.get('answer','')}\n{r.get('interpretation','')}" for i, r in enumerate(value)])
-                    else:
-                        val_str = "\n".join([str(v) for v in value])
-                else:
-                    val_str = str(value)
-                
-                for run in paragraph.runs:
-                    if placeholder in run.text:
-                        run.text = run.text.replace(placeholder, val_str)
-                full_text = "".join(r.text for r in paragraph.runs)
-                if placeholder in full_text:
-                    new_text = full_text.replace(placeholder, val_str)
-                    for i, run in enumerate(paragraph.runs):
-                        run.text = new_text if i == 0 else ""
-
-    for paragraph in doc.paragraphs:
-        replace_in_paragraph(paragraph)
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    replace_in_paragraph(paragraph)
-    doc.save(output_path)
+            lines.append(current)
+            current = w
+    if current:
+        lines.append(current)
+    return lines
 
 def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, reading: dict) -> tuple:
-    cover_file = _pick_random_cover(reading.get("zodiac_western", ""))
-    cover_path = os.path.join(COVERS_DIR, cover_file)
-
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     safe_name = "".join(c for c in full_name if c.isalnum() or c == " ").strip().replace(" ", "_")
-    work_dir = os.path.join(OUTPUT_DIR, f"{safe_name}_{timestamp}")
-    os.makedirs(work_dir, exist_ok=True)
+    pdf_path = os.path.join(OUTPUT_DIR, f"{safe_name}_{timestamp}.pdf")
 
-    tarot_list = reading.get("tarot_readings", reading.get("tarot_lecturas", []))
-    header_context = {
-        "nombre": full_name,
-        "fecha_nacimiento": birth_date,
-        "hora_nacimiento": birth_time if birth_time else "No especificada",
-        "lugar_nacimiento": reading.get("birth_place", "No especificado"),
-        "genero": reading.get("birth_gender", "No especificado"),
-        "signo_occidental": reading.get("zodiac_western", ""),
-        "signo_chino": reading.get("zodiac_chinese", ""),
-        "signo_celta": reading.get("zodiac_celtic", ""),
-        "signo_maya": reading.get("zodiac_mayan", ""),
-        "signo_egipcio": reading.get("zodiac_egyptian", ""),
-        # azteca eliminado - no existe en DB
-        "ascendente": reading.get("ascending_sign", ""),
-        "luna": reading.get("moon_sign", ""),
-        "interpretacion": reading.get("interpretation", reading.get("detailed_interpretation", "")),
-        "interpretacion_detallada": reading.get("detailed_interpretation", reading.get("interpretation", "")),
-        "tarot_lecturas": tarot_list,
-        "tarot_readings": tarot_list,
-        "mensaje_final": reading.get("overall_message", ""),
-        "overall_message": reading.get("overall_message", ""),
-        "fecha_lectura": datetime.utcnow().strftime("%d/%m/%Y"),
-    }
+    # Datos de Claude
+    western = reading.get("zodiac_western", "")
+    chinese = reading.get("zodiac_chinese", "")
+    celtic = reading.get("zodiac_celtic", "")
+    mayan = reading.get("zodiac_mayan", "")
+    egyptian = reading.get("zodiac_egyptian", "")
+    asc = reading.get("ascending_sign", "")
+    moon = reading.get("moon_sign", "")
+    interp = reading.get("detailed_interpretation", reading.get("interpretation", ""))
+    tarot_list = reading.get("tarot_readings", [])
+    overall = reading.get("overall_message", "")
+    birth_place = reading.get("birth_place", "No especificado")
+    gender = reading.get("birth_gender", "No especificado")
 
-    docx_files_in_order = []
+    c = canvas.Canvas(pdf_path, pagesize=A4)
+    width, height = A4
 
-    if cover_file.lower().endswith(".docx"):
-        filled_cover = os.path.join(work_dir, "00_portada.docx")
-        _fill_docx_template(cover_path, filled_cover, header_context)
-        docx_files_in_order.append(filled_cover)
-    else:
-        docx_files_in_order.append(cover_path)
-
-    for i, template_name in enumerate(CONTENT_TEMPLATE_ORDER, start=1):
-        template_path = os.path.join(TEMPLATES_DIR, template_name)
-        if not os.path.exists(template_path):
-            logger.warning(f"Falta template en Contenido/: {template_name}, se omite.")
+    for jpeg_name in CONTENT_JPEG_ORDER:
+        jpeg_path = os.path.join(TEMPLATES_DIR, jpeg_name)
+        if not os.path.exists(jpeg_path):
+            logger.warning(f"Falta fondo: {jpeg_path}")
             continue
-        filled_path = os.path.join(work_dir, f"{i:02d}_{template_name}")
-        _fill_docx_template(template_path, filled_path, header_context)
-        docx_files_in_order.append(filled_path)
 
-    local_backup_path = os.path.join(work_dir, "carta_astral_final.pdf")
-    final_pdf_url = merge_docx_to_pdf(docx_files_in_order, local_backup_path)
+        # Fondo JPEG pantalla completa
+        c.drawImage(ImageReader(jpeg_path), 0, 0, width=width, height=height, preserveAspectRatio=True, anchor='c')
 
-    logger.info(f"PDF generado: {final_pdf_url} con portada {cover_file} y {len(docx_files_in_order)} secciones")
-    return final_pdf_url, cover_file
+        # --- MAPEO DE CONTENIDO POR PAGINA ---
+        c.setFillColorRGB(0.1, 0.1, 0.1)  # texto casi negro, cambia a blanco si tu jpeg es oscuro: 1,1,1
+        c.setFont("Helvetica", 10)
 
+        if "1 Escencia" in jpeg_name:
+            # PAGINA 1 - ESENCIA SOLAR = carta astral principal
+            y = height - 120
+            c.setFont("Helvetica-Bold", 16)
+            c.drawString(50, y, f"{full_name} - {western}")
+            y -= 20
+            c.setFont("Helvetica", 10)
+            c.drawString(50, y, f"Fecha: {birth_date}  Hora: {birth_time}  Lugar: {birth_place}  Genero: {gender}")
+            y -= 15
+            c.drawString(50, y, f"Ascendente: {asc}  Luna: {moon}")
+            y -= 25
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(50, y, "Interpretacion:")
+            y -= 15
+            c.setFont("Helvetica", 9)
+            for line in _wrap_text(interp, 95)[:25]:  # 12-15 lineas de Claude, mostramos max 25 lineas fisicas
+                c.drawString(50, y, line)
+                y -= 12
+                if y < 60:
+                    break
+
+        elif "2 Afinidades" in jpeg_name:
+            # PAGINA 2 - AFINIDADES ZODIACALES
+            y = height - 150
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(50, y, "Afinidades Zodiacales")
+            y -= 25
+            c.setFont("Helvetica", 11)
+            c.drawString(50, y, f"Occidental: {western}")
+            y -= 18
+            c.drawString(50, y, f"Chino: {chinese}")
+            y -= 18
+            c.drawString(50, y, f"Celta: {celtic}")
+            y -= 18
+            c.drawString(50, y, f"Maya: {mayan}")
+            y -= 18
+            c.drawString(50, y, f"Egipcio: {egyptian}")
+            y -= 30
+            # aqui puedes agregar compatibilidad si tienes
+            c.setFont("Helvetica", 9)
+            c.drawString(50, y, "Cada signo aporta una energia ancestral que potencia tu destino.")
+
+        elif "3 Tarot" in jpeg_name:
+            # PAGINA 3 - TAROT EGIPCIO - 5 preguntas
+            y = height - 120
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(50, y, "Tarot Egipcio - 5 Respuestas del Destino")
+            y -= 20
+            for i, t in enumerate(tarot_list[:5], 1):
+                if y < 80:
+                    break
+                c.setFont("Helvetica-Bold", 10)
+                q = t.get('question','')[:90]
+                c.drawString(50, y, f"{i}. {q}")
+                y -= 12
+                c.setFont("Helvetica", 9)
+                c.drawString(60, y, f"Carta: {t.get('card','')} | Respuesta: {t.get('answer','')}")
+                y -= 12
+                for line in _wrap_text(t.get('interpretation',''), 90)[:5]:
+                    c.drawString(60, y, line)
+                    y -= 11
+                y -= 10
+
+        elif "4 Posplanetas" in jpeg_name or "Posplanet" in jpeg_name:
+            # PAGINA 4 - POSICION PLANETAS + CIERRE
+            y = height - 130
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(50, y, "Posicion Planetaria y Mensaje Final")
+            y -= 25
+            c.setFont("Helvetica", 10)
+            c.drawString(50, y, f"Nombre: {full_name}")
+            y -= 15
+            c.drawString(50, y, f"Signo: {western} | Asc: {asc} | Luna: {moon}")
+            y -= 25
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(50, y, "Mensaje del Universo:")
+            y -= 15
+            c.setFont("Helvetica", 10)
+            for line in _wrap_text(overall, 90)[:12]:
+                c.drawString(50, y, line)
+                y -= 13
+
+        c.showPage()
+
+    c.save()
+    logger.info(f"PDF JPEG generado: {pdf_path}")
+
+    # Portada random como antes
+    cover_file = "default_cover.jpg"
+    try:
+        from final_pdf_generator_v2 import _pick_random_cover
+        cover_file = _pick_random_cover(western)
+    except:
+        pass
+
+    return pdf_path, cover_file
