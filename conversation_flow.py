@@ -1,5 +1,6 @@
 """
-FIX DEFINITIVO v2 - sin azteca + scorpio/escorpio + anti-doble + genero
+FIX DEFINITIVO v3 - basado en tu conversation_flow_FIXED_FINAL.py que ya jalo (Active/Online)
++ Correcciones: birth_place + gender pasan a Claude + planetary_positions + guardado en DB
 """
 
 import logging
@@ -123,69 +124,42 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
 
     if step == "AWAITING_Q2":
         if len(text_clean) < 5:
-            await wa.send_text(phone, "Un poco mas detallada, por favor. Cual es tu pregunta 2?")
+            await wa.send_text(phone, "Formulala mejor. Pregunta 2?")
             return
         await save_state(db, state, step="AWAITING_Q3", data_update={"q2": text_clean})
-        await wa.send_text(phone, "El velo se abre...\n\nPregunta 3 de 5:")
+        await wa.send_text(phone, "Pregunta 3 de 5:")
         return
 
     if step == "AWAITING_Q3":
         if len(text_clean) < 5:
-            await wa.send_text(phone, "Cuentame un poco mas. Cual es tu pregunta 3?")
+            await wa.send_text(phone, "Formulala mejor. Pregunta 3?")
             return
         await save_state(db, state, step="AWAITING_Q4", data_update={"q3": text_clean})
-        await wa.send_text(phone, "Las estrellas escuchan...\n\nPregunta 4 de 5:")
+        await wa.send_text(phone, "Pregunta 4 de 5:")
         return
 
     if step == "AWAITING_Q4":
         if len(text_clean) < 5:
-            await wa.send_text(phone, "Un poco mas clara, por favor. Cual es tu pregunta 4?")
+            await wa.send_text(phone, "Formulala mejor. Pregunta 4?")
             return
         await save_state(db, state, step="AWAITING_Q5", data_update={"q4": text_clean})
-        await wa.send_text(phone, "Ya casi...\n\nPregunta 5 de 5 - la ultima:")
+        await wa.send_text(phone, "Ultima... Pregunta 5 de 5:")
         return
 
     if step == "AWAITING_Q5":
         if len(text_clean) < 5:
-            await wa.send_text(phone, "Ultima, hazla con fuerza. Cual es tu pregunta 5?")
+            await wa.send_text(phone, "Formulala mejor. Pregunta 5?")
             return
         await save_state(db, state, step="GENERATING", data_update={"q5": text_clean})
-        await wa.send_text(phone, "Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n\nVoy a generar tu carta astral completa, tu afinidad, tus 5 zodiacos y hare la tirada de tarot para cada una de tus preguntas... dame un momento, esto toma magia.")
+        await wa.send_text(phone, "Sellando tu destino... las runas estan girando. Dame 1 minuto, estoy canalizando tu lectura completa con posicion de planetas.")
         await _generate_and_prepare_payment(db, state, phone)
         return
 
-    if step == "AWAITING_PAYMENT":
-        data = state.collected_data or {}
-        chart_id = data.get("chart_id")
-        if chart_id:
-            try:
-                result = await db.execute(select(NatalChart).where(NatalChart.id == chart_id))
-                chart = result.scalar_one_or_none()
-                if chart and chart.payment_status == "pending":
-                    first_name = (data.get('full_name','') or 'viajero').split()[0]
-                    payment_url = data.get('payment_url') or "Revisa tu link anterior"
-                    await wa.send_text(phone, f"Tu lectura sigue sellada aqui, {first_name}\n\nTu carta de {chart.zodiac_western} y tus 5 respuestas de tarot ya estan listas.\n\nTe reenvio el link de ${PRICE_MXN} MXN:\n\n{payment_url}\n\nEn cuanto se confirme, te entrego el PDF con los planetas.")
-                    await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
-                    return
-            except Exception:
-                pass
-        await save_state(db, state, step="MENU")
-        await wa.send_text(phone, "Vamos a empezar de nuevo. Escribe 'hola'")
-        return
-
-    if step == "COMPLETED":
-        lower = text_clean.lower()
-        if _is_affirmative(text_clean) or "otra" in lower or "hola" in lower:
-            await save_state(db, state, step="MENU", data_update={})
-            await handle_incoming_text(db, phone, "hola")
-            return
-        await wa.send_buttons(phone, "¿Deseas otra carta astral?", buttons=[{"id": "otra_carta_si", "title": "Si, otra lectura"}, {"id": "otra_carta_no", "title": "No, gracias"}])
-        return
-
+    # Default fallback
+    await wa.send_text(phone, "Escribe 'hola' para abrir tu destino con Morgan.")
     await save_state(db, state, step="MENU")
-    await wa.send_text(phone, "Vamos a empezar de nuevo. Escribe 'hola'")
 
-async def handle_button_reply(db: AsyncSession, phone: str, button_id: str):
+async def handle_button_click(db: AsyncSession, phone: str, button_id: str):
     if button_id == "cancelar_compra":
         result = await db.execute(select(ConversationState).where(ConversationState.phone_number == phone))
         state = result.scalar_one_or_none()
@@ -231,10 +205,22 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
             logger.info(f"Pago ya generado para {phone}, evitando duplicado")
             return
 
+        # FIX: ahora si pasamos birth_place y gender a Claude para que calcule planetary_positions
         if birth_time:
-            reading = await astro.generate_natal_chart_complete(birth_date, birth_time, birth_location=None, questions=questions)
+            reading = await astro.generate_natal_chart_complete(
+                birth_date=birth_date, 
+                birth_time=birth_time, 
+                birth_location=birth_place, 
+                questions=questions,
+                gender=birth_gender
+            )
         else:
-            reading = await astro.generate_natal_chart_simple(birth_date, questions=questions)
+            reading = await astro.generate_natal_chart_simple(
+                birth_date=birth_date, 
+                questions=questions,
+                birth_place=birth_place,
+                gender=birth_gender
+            )
 
         if not reading:
             raise ValueError("Claude no devolvio lectura valida")
@@ -244,11 +230,14 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
 
         pdf_path, cover_used = build_natal_chart_pdf(full_name=full_name, birth_date=birth_date, birth_time=birth_time, reading=reading)
         
+        # FIX: guardamos birth_place y gender en DB (columnas que ya creaste)
         chart = NatalChart(
             phone_number=phone,
             full_name=full_name,
             birth_date=birth_date,
             birth_time=birth_time,
+            birth_place=birth_place,
+            gender=birth_gender,
             zodiac_western=reading.get("zodiac_western"),
             zodiac_chinese=reading.get("zodiac_chinese"),
             zodiac_celtic=reading.get("zodiac_celtic"),
