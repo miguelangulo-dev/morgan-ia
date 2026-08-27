@@ -59,7 +59,7 @@ Para cada pregunta, incluye en el JSON final un objeto tarot con:
 - question, card, answer (Si/No), interpretation de 4-5 lineas explicando carta y simbologia
 """
 
-        prompt = f"""Eres Morgan, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA.
+        prompt = f"""Eres Morgania, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA.
 
 FECHA DE NACIMIENTO: {birth_date}
 {questions_text}
@@ -110,7 +110,7 @@ REGLAS:
             logger.error(f"Error generando carta natal simple: {str(e)}")
             return None
     
-    async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None) -> dict:
+     async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None, gender: str = None, **kwargs) -> dict:
         questions_text = ""
         if questions:
             q_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
@@ -125,15 +125,16 @@ IMPORTANTE: Para CADA una de esas 5 preguntas debes hacer tirada tarot egipcio:
 - Relaciona con su pregunta especifica
 """
 
-        prompt = f"""Eres Morgan, guardiana de los velos, experta en astrologia, tarot egipcio y zodiacos ancestrales.
+        prompt = f"""Eres Morgania, guardiana de los velos, experta en astrologia, tarot egipcio y zodiacos ancestrales.
 
 DATOS:
 FECHA: {birth_date}
 HORA: {birth_time}
 LUGAR: {birth_location or "Desconocido"}
+GENERO: {kwargs.get('gender', 'No especificado')}
 {questions_text}
 
-Calcula con hora exacta: ascendente, signo lunar, casas astrologicas, posicion planetaria.
+Calcula con hora exacta y lugar: ascendente, signo lunar, casas astrologicas, posicion planetaria. Considera la energia del lugar de nacimiento y genero para la interpretacion.
 
 Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
 
