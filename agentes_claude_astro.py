@@ -1,6 +1,6 @@
 """
-Agente Claude FINAL - Sin acentos, prompts largos, tarot integrado
-Corregido: 5-6 lineas -> 12-15, sin ¿ ¡ tildes, overall_message ampliado
+Agente Claude FINAL - FIX Railway Crashed + birth_place + gender + sin azteca
+Max_tokens 4000, prompts 12-15 lineas, tarot 5-6 lineas
 """
 
 import anthropic
@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 def _extract_json(raw_text: str) -> str:
-    """Quita fences de markdown (```json ... ```) si Claude los agrega."""
     text = raw_text.strip()
     if "```" in text:
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
@@ -23,16 +22,11 @@ def _extract_json(raw_text: str) -> str:
     return text.strip()
 
 def _strip_accents(value):
-    """
-    Quita acentos/tildes/¿¡ de cualquier string dentro del dict, recursivamente.
-    Usa unicodedata para garantizar texto limpio sin depender de que Claude obedezca.
-    """
     import unicodedata
     def clean(s):
         nfkd = unicodedata.normalize('NFKD', s)
         ascii_only = "".join([c for c in nfkd if not unicodedata.combining(c)])
         return ascii_only.replace("¿","").replace("¡","").replace("?","").replace("!","").replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
-    
     if isinstance(value, str):
         return clean(value)
     if isinstance(value, dict):
@@ -47,7 +41,7 @@ class AstroAgent:
         self.client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         self.model = "claude-sonnet-4-5"
     
-    async def generate_natal_chart_simple(self, birth_date: str, questions: list = None) -> dict:
+    async def generate_natal_chart_simple(self, birth_date: str, questions: list = None, birth_place: str = None, gender: str = None) -> dict:
         questions_text = ""
         if questions:
             q_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
@@ -59,9 +53,11 @@ Para cada pregunta, incluye en el JSON final un objeto tarot con:
 - question, card, answer (Si/No), interpretation de 4-5 lineas explicando carta y simbologia
 """
 
-        prompt = f"""Eres Morgania, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA.
+        prompt = f"""Eres Morgan, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA.
 
 FECHA DE NACIMIENTO: {birth_date}
+LUGAR: {birth_place or "No especificado"}
+GENERO: {gender or "No especificado"}
 {questions_text}
 
 Proporciona SOLO JSON valido, sin acentos, sin caracteres especiales como ¿ ¡, sin tildes, todo en ASCII simple para evitar errores de encoding:
@@ -104,13 +100,17 @@ REGLAS:
             result = _strip_accents(json.loads(raw_text))
             if questions:
                 result["user_questions"] = questions
+            if birth_place:
+                result["birth_place"] = birth_place
+            if gender:
+                result["birth_gender"] = gender
             logger.info(f"OK Carta natal simple para {birth_date}")
             return result
         except Exception as e:
             logger.error(f"Error generando carta natal simple: {str(e)}")
             return None
     
-     async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None, gender: str = None, **kwargs) -> dict:
+    async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None, gender: str = None) -> dict:
         questions_text = ""
         if questions:
             q_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
@@ -125,16 +125,16 @@ IMPORTANTE: Para CADA una de esas 5 preguntas debes hacer tirada tarot egipcio:
 - Relaciona con su pregunta especifica
 """
 
-        prompt = f"""Eres Morgania, guardiana de los velos, experta en astrologia, tarot egipcio y zodiacos ancestrales.
+        prompt = f"""Eres Morgan, guardiana de los velos, experta en astrologia, tarot egipcio y zodiacos ancestrales.
 
 DATOS:
 FECHA: {birth_date}
 HORA: {birth_time}
 LUGAR: {birth_location or "Desconocido"}
-GENERO: {kwargs.get('gender', 'No especificado')}
+GENERO: {gender or "No especificado"}
 {questions_text}
 
-Calcula con hora exacta y lugar: ascendente, signo lunar, casas astrologicas, posicion planetaria. Considera la energia del lugar de nacimiento y genero para la interpretacion.
+Calcula con hora exacta y lugar: ascendente, signo lunar, casas astrologicas, posicion planetaria. Considera la energia del lugar y genero.
 
 Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
 
@@ -150,7 +150,7 @@ Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
   "tarot_readings": [
     {{
       "question": "pregunta del usuario",
-      "card": "Nombre carta egipcia con numero romano - EJEMPLO generico, tu eliges la correcta segun pregunta",
+      "card": "Nombre carta egipcia con numero romano",
       "answer": "Si o No",
       "interpretation": "5 a 6 lineas explicando simbologia de la carta egipcia y que significa para esta pregunta especifica"
     }}
@@ -162,8 +162,7 @@ REGLAS CRITICAS:
 - Responde SOLO JSON valido
 - NO uses acentos, tildes, ni simbolos raros ¿ ¡
 - detailed_interpretation LARGA 12-15 lineas, no 5-6
-- Si hay 5 preguntas, tarot_readings debe tener 5 objetos, cada uno con carta DIFERENTE segun corresponda
-- card es ejemplo, tu eliges carta real segun energia de pregunta
+- Si hay 5 preguntas, tarot_readings debe tener 5 objetos, cada uno con carta DIFERENTE
 - overall_message 5-6 lineas, no 2-3
 """
         
@@ -179,6 +178,10 @@ REGLAS CRITICAS:
             result = _strip_accents(json.loads(raw_text))
             if questions:
                 result["user_questions"] = questions
+            if birth_location:
+                result["birth_place"] = birth_location
+            if gender:
+                result["birth_gender"] = gender
             logger.info(f"OK Carta natal completa para {birth_date}")
             return result
         except Exception as e:
@@ -204,7 +207,7 @@ JSON solo, sin acentos, sin ¿ ¡, ASCII:
   "readings": [
     {{
       "question": "texto pregunta",
-      "card": "Nombre carta egipcia con numero romano - ejemplo generico, tu eliges la adecuada",
+      "card": "Nombre carta egipcia con numero romano",
       "answer": "Si",
       "interpretation": "5 a 6 lineas de interpretacion con simbologia egipcia explicada y relacionada a la pregunta"
     }}
@@ -224,9 +227,7 @@ REGLAS:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                messages=[{"role": "user", "content": prompt}]
             )
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
@@ -244,7 +245,7 @@ REGLAS:
 SIGNO USUARIO: {user_zodiac}
 SIGNO OBJETIVO: {target_zodiac}
 
-Considera elementos, polaridad, emocional, intelectual, sexual.
+Considera elementos, polaridad, emocional, intelectual, fisica.
 
 JSON solo, sin acentos:
 
@@ -270,9 +271,7 @@ Solo JSON, sin acentos ni simbolos raros.
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                messages=[{"role": "user", "content": prompt}]
             )
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
@@ -283,4 +282,3 @@ Solo JSON, sin acentos ni simbolos raros.
         except Exception as e:
             logger.error(f"Error calculando afinidad: {str(e)}")
             return None
- 
