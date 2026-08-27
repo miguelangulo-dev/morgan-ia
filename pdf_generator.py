@@ -82,7 +82,7 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
         
         try:
             # Intenta fuente bold, si no existe usa default
-            font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
+            font_bold = ImageFont.truetype("DejaVuSans-Bold.ttf", 32)
             font_reg = ImageFont.truetype("DejaVuSans.ttf", 22)
             font_small = ImageFont.truetype("DejaVuSans.ttf", 18)
         except:
@@ -125,10 +125,10 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
                 pos_text = planets.get(planet_key, "")
                 x = int(W * x_rel)
                 y = int(H * (1 - y_rel))  # PIL y=0 arriba, por eso invertimos
-                # Dibujar etiqueta blanca con fondo semitransparente
+                # Dibujar etiqueta dorada con fondo semitransparente
                 label = planet_key.upper()
                 # fondo
-                draw.rectangle([x-50, y-15, x+50, y+10], fill=(0,0,0))
+                draw.rectangle([x-50, y-15, x+50, y+10], fill=(0,0,0,120))
                 draw.text((x-40, y-12), label, fill=(255,215,0), font=font_bold)
                 if pos_text:
                     draw.text((x-45, y+12), pos_text[:20], fill=(255,255,255), font=font_small)
@@ -146,3 +146,4 @@ def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, read
     
     logger.info(f"PDF Pillow con posplanetas generado: {pdf_path}")
     return pdf_path, "4 Posplanetas.jpeg"
+
