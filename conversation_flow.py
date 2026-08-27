@@ -1,6 +1,6 @@
 """
-FIX DEFINITIVO v3 - basado en tu conversation_flow_FIXED_FINAL.py que ya jalo (Active/Online)
-+ Correcciones: birth_place + gender pasan a Claude + planetary_positions + guardado en DB
+PATCH v5 - Fix handle_button_reply alias para main.py
+Basado en conversation_flow_v4_FINAL_FIX.py que ya tenias
 """
 
 import logging
@@ -151,12 +151,11 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
             await wa.send_text(phone, "Formulala mejor. Pregunta 5?")
             return
         await save_state(db, state, step="GENERATING", data_update={"q5": text_clean})
-        await wa.send_text(phone, "Sellando tu destino... las runas estan girando. Dame 1 minuto, estoy canalizando tu lectura completa con posicion de planetas.")
+        await wa.send_text(phone, "Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n\nVoy a generar tu carta astral completa, tu afinidad, tus 5 zodiacos y hare la tirada de tarot para cada una de tus preguntas... dame un momento, esto toma magia.")
         await _generate_and_prepare_payment(db, state, phone)
         return
 
-    # Default fallback
-    await wa.send_text(phone, "Escribe 'hola' para abrir tu destino con Morgan.")
+    await wa.send_text(phone, "Escribe 'hola' para abrir tu destino con Morgania.")
     await save_state(db, state, step="MENU")
 
 async def handle_button_click(db: AsyncSession, phone: str, button_id: str):
@@ -177,7 +176,7 @@ async def handle_button_click(db: AsyncSession, phone: str, button_id: str):
         return
 
     if button_id == "otra_carta_no":
-        await wa.send_text(phone, "Gracias por confiar en Morgan. Que las runas te guien. Escribe 'hola' cuando quieras volver.")
+        await wa.send_text(phone, "Gracias por confiar en Morgania. Que las runas te guien. Escribe 'hola' cuando quieras volver.")
         return
 
     mapping = {
@@ -190,6 +189,10 @@ async def handle_button_click(db: AsyncSession, phone: str, button_id: str):
     }
     text_equivalent = mapping.get(button_id, button_id)
     await handle_incoming_text(db, phone, text_equivalent)
+
+# FIX para main.py que llama handle_button_reply
+async def handle_button_reply(db: AsyncSession, phone: str, button_id: str):
+    return await handle_button_click(db, phone, button_id)
 
 async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationState, phone: str):
     data = state.collected_data or {}
@@ -205,7 +208,6 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
             logger.info(f"Pago ya generado para {phone}, evitando duplicado")
             return
 
-        # FIX: ahora si pasamos birth_place y gender a Claude para que calcule planetary_positions
         if birth_time:
             reading = await astro.generate_natal_chart_complete(
                 birth_date=birth_date, 
@@ -230,7 +232,6 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
 
         pdf_path, cover_used = build_natal_chart_pdf(full_name=full_name, birth_date=birth_date, birth_time=birth_time, reading=reading)
         
-        # FIX: guardamos birth_place y gender en DB (columnas que ya creaste)
         chart = NatalChart(
             phone_number=phone,
             full_name=full_name,
@@ -291,7 +292,7 @@ async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
     await wa.send_document(
         chart.phone_number,
         chart.pdf_path,
-        caption=f"Aqui esta tu destino completo, {chart.full_name.split()[0]}. Gracias por confiar en Morgan. Que las runas te guien.",
+        caption=f"Aqui esta tu destino completo, {chart.full_name.split()[0]}. Gracias por confiar en Morgania. Que las runas te guien.",
     )
     chart.delivered = True
     await db.commit()
