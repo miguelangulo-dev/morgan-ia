@@ -1,161 +1,149 @@
-import httpx
+"""
+utils_whatsapp.py - FIX document.link is not a valid URL
+Ahora sube el PDF local a WhatsApp y envia con media_id, no con link
+"""
+
 import os
 import logging
-import json
+import httpx
+import mimetypes
 
 logger = logging.getLogger(__name__)
 
-WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", os.getenv("WHATSAPP_ACCESS_TOKEN", ""))
+PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", os.getenv("PHONE_NUMBER_ID", ""))
+WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v18.0")
+
+BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{PHONE_NUMBER_ID}"
 
 class WhatsAppClient:
-    """Cliente para enviar mensajes por WhatsApp"""
-    
     def __init__(self):
-        self.phone_id = WHATSAPP_PHONE_ID
         self.token = WHATSAPP_TOKEN
-        self.api_url = f"https://graph.facebook.com/v18.0/{self.phone_id}/messages"
-        self.headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
-    
-    async def send_text(self, to_phone: str, text: str, preview_url: bool = False):
-        """Envía mensaje de texto simple"""
+        self.phone_id = PHONE_NUMBER_ID
+        self.base_url = BASE_URL
+        self.headers = {"Authorization": f"Bearer {self.token}"}
+
+    async def send_text(self, phone: str, text: str):
+        url = f"{self.base_url}/messages"
         payload = {
             "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": to_phone,
+            "to": phone,
             "type": "text",
-            "text": {"preview_url": preview_url, "body": text}
+            "text": {"body": text}
         }
-        
         async with httpx.AsyncClient() as client:
-            response = await client.post(self.api_url, json=payload, headers=self.headers)
-            
-            if response.status_code == 200:
-                logger.info(f"✅ Texto enviado a {to_phone}")
-                return response.json()
-            else:
-                logger.error(f"❌ Error enviando texto: {response.text}")
-                return None
-    
-    async def send_buttons(self, to_phone: str, text: str, buttons: list):
-        """
-        Envía mensaje con botones interactivos
-        
-        buttons = [
-            {"id": "btn1", "title": "Carta Completa"},
-            {"id": "btn2", "title": "Carta Simple"}
-        ]
-        """
+            r = await client.post(url, headers={**self.headers, "Content-Type": "application/json"}, json=payload)
+            if r.status_code != 200:
+                logger.error(f"Error enviando texto: {r.text}")
+            return r
+
+    async def send_buttons(self, phone: str, body_text: str, buttons: list):
+        # buttons = [{"id": "...", "title": "..."}]
+        url = f"{self.base_url}/messages"
+        btns = []
+        for b in buttons[:3]:
+            btns.append({
+                "type": "reply",
+                "reply": {"id": b["id"], "title": b["title"][:20]}
+            })
         payload = {
             "messaging_product": "whatsapp",
-            "to": to_phone,
+            "to": phone,
             "type": "interactive",
             "interactive": {
                 "type": "button",
-                "body": {"text": text},
-                "action": {
-                    "buttons": [
-                        {
-                            "type": "reply",
-                            "reply": {"id": btn["id"], "title": btn["title"]}
-                        }
-                        for btn in buttons
-                    ]
-                }
+                "body": {"text": body_text},
+                "action": {"buttons": btns}
             }
         }
-        
         async with httpx.AsyncClient() as client:
-            response = await client.post(self.api_url, json=payload, headers=self.headers)
-            
-            if response.status_code == 200:
-                logger.info(f"✅ Botones enviados a {to_phone}")
-                return response.json()
-            else:
-                logger.error(f"❌ Error enviando botones: {response.text}")
-                return None
-    
-    async def send_list(self, to_phone: str, text: str, button_text: str, sections: list):
+            r = await client.post(url, headers={**self.headers, "Content-Type": "application/json"}, json=payload)
+            if r.status_code != 200:
+                logger.error(f"Error enviando botones: {r.text}")
+            return r
+
+    async def send_document(self, phone: str, file_path: str, caption: str = "", filename: str = "Carta_Astral_Morgan.pdf"):
         """
-        Envía mensaje con menú de lista
-        
-        sections = [
-            {
-                "title": "Cartas Natales",
-                "rows": [
-                    {"id": "carta_completa", "title": "Completa", "description": "Con hora y lugar"},
-                    {"id": "carta_simple", "title": "Simple", "description": "Solo fecha"}
-                ]
-            }
-        ]
+        FIX: Si file_path es local (/app/generated_pdfs/...), lo sube primero a WhatsApp
+        para obtener media_id y luego envia el documento con id, no con link.
+        Si es URL http, lo envia como link.
         """
+        # Si es URL publica, enviar directo con link
+        if file_path.startswith("http://") or file_path.startswith("https://"):
+            return await self._send_document_by_link(phone, file_path, caption, filename)
+
+        # Si es archivo local, subirlo
+        if not os.path.exists(file_path):
+            logger.error(f"PDF no existe: {file_path}")
+            return None
+
+        # 1. Subir archivo a WhatsApp para obtener media_id
+        media_id = await self._upload_media(file_path)
+        if not media_id:
+            logger.error(f"No se pudo subir media: {file_path}")
+            return None
+
+        # 2. Enviar documento con media_id
+        return await self._send_document_by_id(phone, media_id, caption, filename)
+
+    async def _upload_media(self, file_path: str) -> str:
+        url = f"{self.base_url}/media"
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type:
+            mime_type = "application/pdf"
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                with open(file_path, "rb") as f:
+                    files = {"file": (os.path.basename(file_path), f, mime_type)}
+                    data = {"messaging_product": "whatsapp", "type": "document"}
+                    r = await client.post(url, headers=self.headers, data=data, files=files)
+                    if r.status_code == 200:
+                        j = r.json()
+                        media_id = j.get("id")
+                        logger.info(f"Media subido OK: {media_id} para {file_path}")
+                        return media_id
+                    else:
+                        logger.error(f"Error subiendo media: {r.status_code} {r.text}")
+                        return None
+        except Exception as e:
+            logger.error(f"Excepcion subiendo media: {e}", exc_info=True)
+            return None
+
+    async def _send_document_by_id(self, phone: str, media_id: str, caption: str, filename: str):
+        url = f"{self.base_url}/messages"
         payload = {
             "messaging_product": "whatsapp",
-            "to": to_phone,
-            "type": "interactive",
-            "interactive": {
-                "type": "list",
-                "body": {"text": text},
-                "action": {
-                    "button": button_text,
-                    "sections": sections
-                }
-            }
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.post(self.api_url, json=payload, headers=self.headers)
-            
-            if response.status_code == 200:
-                logger.info(f"✅ Menú de lista enviado a {to_phone}")
-                return response.json()
-            else:
-                logger.error(f"❌ Error enviando lista: {response.text}")
-                return None
-    
-    async def send_document(self, to_phone: str, pdf_url: str, caption: str = ""):
-        """Envía documento PDF"""
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": to_phone,
+            "to": phone,
             "type": "document",
             "document": {
-                "link": pdf_url,
-                "caption": caption if caption else "Tu lectura de Morgan-ia 🌙"
+                "id": media_id,
+                "caption": caption,
+                "filename": filename
             }
         }
-        
         async with httpx.AsyncClient() as client:
-            response = await client.post(self.api_url, json=payload, headers=self.headers)
-            
-            if response.status_code == 200:
-                logger.info(f"✅ Documento enviado a {to_phone}")
-                return response.json()
+            r = await client.post(url, headers={**self.headers, "Content-Type": "application/json"}, json=payload)
+            if r.status_code != 200:
+                logger.error(f"Error enviando documento por id: {r.text}")
             else:
-                logger.error(f"❌ Error enviando documento: {response.text}")
-                return None
-    
-    async def send_image(self, to_phone: str, image_url: str, caption: str = ""):
-        """Envía imagen"""
+                logger.info(f"Documento enviado por id {media_id} a {phone}")
+            return r
+
+    async def _send_document_by_link(self, phone: str, link: str, caption: str, filename: str):
+        url = f"{self.base_url}/messages"
         payload = {
             "messaging_product": "whatsapp",
-            "to": to_phone,
-            "type": "image",
-            "image": {
-                "link": image_url,
-                "caption": caption if caption else ""
+            "to": phone,
+            "type": "document",
+            "document": {
+                "link": link,
+                "caption": caption,
+                "filename": filename
             }
         }
-        
         async with httpx.AsyncClient() as client:
-            response = await client.post(self.api_url, json=payload, headers=self.headers)
-            
-            if response.status_code == 200:
-                logger.info(f"✅ Imagen enviada a {to_phone}")
-                return response.json()
-            else:
-                logger.error(f"❌ Error enviando imagen: {response.text}")
-                return None
+            r = await client.post(url, headers={**self.headers, "Content-Type": "application/json"}, json=payload)
+            if r.status_code != 200:
+                logger.error(f"Error enviando documento por link: {r.text}")
+            return r
