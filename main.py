@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, HTMLResponse
 import os
 import logging
 
@@ -192,3 +192,11 @@ scheduler.start()
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "service": "morgan-ia"}
+
+@app.get("/pago-exitoso", response_class=HTMLResponse)
+async def pago_exitoso():
+    return """
+    <html><head><title>Pago Exitoso</title><meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>body{font-family:Arial;background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}.card{background:#1a1a1a;padding:40px;border-radius:16px;text-align:center;border:1px solid #FFD700}h1{color:#FFD700}</style>
+    </head><body><div class="card"><h1>✨ Pago Confirmado ✨</h1><p>Tu destino esta sellado.</p><p>Regresa a WhatsApp, tu PDF ya se esta entregando.</p></div></body></html>
+    """
