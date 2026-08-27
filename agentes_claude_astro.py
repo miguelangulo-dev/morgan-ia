@@ -1,6 +1,8 @@
+
 """
-Agente Claude FINAL - FIX Railway Crashed + birth_place + gender + sin azteca
+Agente Claude FINAL - FIX Railway Crashed + birth_place + gender + sin azteca + planetary_positions
 Max_tokens 4000, prompts 12-15 lineas, tarot 5-6 lineas
+Versión corregida con planetary_positions para página 4 Posplanetas
 """
 
 import anthropic
@@ -69,6 +71,18 @@ Proporciona SOLO JSON valido, sin acentos, sin caracteres especiales como ¿ ¡,
   "zodiac_mayan": "Signo maya",
   "zodiac_egyptian": "Signo egipcio",
   "interpretation": "Parrafo de 12 a 15 lineas detalladas sobre personalidad, destino, energia, proposito de vida, retos y dones. Debe ser profundo y extenso.",
+  "planetary_positions": {{
+    "sol": "Aries Casa 1",
+    "luna": "Tauro Casa 2",
+    "mercurio": "Geminis Casa 3",
+    "venus": "Cancer Casa 4",
+    "marte": "Leo Casa 5",
+    "jupiter": "Virgo Casa 6",
+    "saturno": "Libra Casa 7",
+    "urano": "Escorpio Casa 8",
+    "neptuno": "Sagitario Casa 9",
+    "pluton": "Capricornio Casa 10"
+  }},
   "tarot_readings": [
     {{
       "question": "texto pregunta 1",
@@ -86,6 +100,7 @@ REGLAS:
 - No uses simbolos ¿ ¡ 
 - Si hay preguntas, genera tarot_readings con las 5
 - Interpretation debe ser LARGA 12-15 lineas minimo
+- planetary_positions obligatorio con 10 planetas
 """
         
         try:
@@ -147,6 +162,20 @@ Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
   "ascending_sign": "Ascendente",
   "moon_sign": "Signo lunar",
   "detailed_interpretation": "Analisis DETALLADO de 12 a 15 lineas minimo. Incluye: casas astrologicas, posicion de planetas al nacer, energia predominante, propositos de vida, karma, dones ocultos, retos. Debe ser extenso, mistico y profundo.",
+  "planetary_positions": {{
+    "sol": "Aries Casa 10 grado 15",
+    "luna": "Tauro Casa 11 grado 3",
+    "mercurio": "Geminis Casa 1 grado 22",
+    "venus": "Cancer Casa 2 grado 8",
+    "marte": "Leo Casa 3 grado 19",
+    "jupiter": "Virgo Casa 4 grado 5",
+    "saturno": "Libra Casa 5 grado 27",
+    "urano": "Escorpio Casa 6 grado 11",
+    "neptuno": "Sagitario Casa 7 grado 14",
+    "pluton": "Capricornio Casa 8 grado 29",
+    "ascendente": "Acuario Casa 1",
+    "medio_cielo": "Escorpio Casa 10"
+  }},
   "tarot_readings": [
     {{
       "question": "pregunta del usuario",
@@ -164,6 +193,7 @@ REGLAS CRITICAS:
 - detailed_interpretation LARGA 12-15 lineas, no 5-6
 - Si hay 5 preguntas, tarot_readings debe tener 5 objetos, cada uno con carta DIFERENTE
 - overall_message 5-6 lineas, no 2-3
+- planetary_positions obligatorio con 10-12 posiciones
 """
         
         try:
@@ -227,7 +257,9 @@ REGLAS:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
             )
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
@@ -271,7 +303,9 @@ Solo JSON, sin acentos ni simbolos raros.
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
             )
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
