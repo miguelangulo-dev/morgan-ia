@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Morgan-ia")
 
 engine = create_async_engine(DATABASE_URL, echo=False) if DATABASE_URL else None
+
+
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False) if engine else None
 
 @app.on_event("startup")
