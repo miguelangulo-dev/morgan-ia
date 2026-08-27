@@ -1,4 +1,3 @@
-
 """
 payment.py - FINAL REVISADO - Compatible con normativa original + fix Todo listo
 
