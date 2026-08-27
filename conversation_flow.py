@@ -1,8 +1,9 @@
 """
-conversation_flow v9 - Fix link expirado + regeneracion + diseño limpio
-- Si link expiro, genera nuevo PaymentLink automaticamente
-- Usa pdf_generator_LIMPIO_v9
-- Ya no manda Escribe hola fantasma en GENERATING
+conversation_flow v9 FIX IMPORT - No crashea
+Cambia import de pdf_generator_LIMPIO_v9 -> pdf_generator
+Para que no de ModuleNotFoundError en Railway
+
+Usa payment.py FINAL REVISADO (que ya tienes como payment_FINAL_REVISADO.py)
 """
 
 import logging
@@ -13,8 +14,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import ConversationState, NatalChart
 from utils_whatsapp import WhatsAppClient
 from agentes_claude_astro import AstroAgent
-from pdf_generator_LIMPIO_v9 import build_natal_chart_pdf
-from payment import create_payment_link, regenerate_payment_link_for_chart
+
+# FIX IMPORT: intenta limpio v9, si no existe usa pdf_generator viejo
+try:
+    from pdf_generator_LIMPIO_v9 import build_natal_chart_pdf
+    print("Usando pdf_generator_LIMPIO_v9")
+except ModuleNotFoundError:
+    try:
+        from pdf_generator import build_natal_chart_pdf
+        print("Usando pdf_generator fallback")
+    except ModuleNotFoundError:
+        from final_pdf_generator_JPEG import build_natal_chart_pdf
+        print("Usando final_pdf_generator_JPEG fallback")
+
+from payment import create_payment_link
+try:
+    from payment import regenerate_payment_link_for_chart
+except ImportError:
+    # Si usas payment viejo, define regenerador que llama al mismo create
+    async def regenerate_payment_link_for_chart(chart_id, full_name, amount_mxn=49):
+        return await create_payment_link(amount_mxn, str(chart_id), f"Carta Astral - {full_name} - Reenvio")
 
 logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
@@ -45,7 +64,6 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
     lower = text_clean.lower()
     data = state.collected_data or {}
 
-    # FIX GENERATING - no spamear Escribe hola
     if step == "GENERATING":
         if data.get("payment_link"):
             await wa.send_text(phone, f"Tu destino esta sellado, {data.get('full_name','').split()[0]}.\n\nTu link sigue activo (NO expira):\n{data.get('payment_link')}")
@@ -59,14 +77,12 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
     if step == "AWAITING_PAYMENT":
         if data.get("payment_link"):
             if lower in ["hola","ola","hey","pagar","reenviar","link","ya pague","ya pagué","pago"]:
-                # Si el link es de tipo checkout y pudo expirar, regeneramos uno nuevo persistente
                 try:
-                    # Regenera link persistente siempre al reenviar para evitar Todo listo
                     chart_id = data.get("chart_id")
                     if chart_id:
                         new_link = await regenerate_payment_link_for_chart(chart_id, data.get('full_name',''), PRICE_MXN)
                         await save_state(db, state, data_update={"payment_link": new_link, "payment_url": new_link})
-                        await wa.send_text(phone, f"Tu lectura sigue sellada, ${PRICE_MXN} MXN.\n\nTe genere un nuevo link que NO expira:\n{new_link}\n\nEn cuanto pagues te mando el PDF limpio de 6 hojas.")
+                        await wa.send_text(phone, f"Tu lectura sigue sellada, ${PRICE_MXN} MXN.\n\nTe genere un nuevo link que NO expira:\n{new_link}\n\nEn cuanto pagues te mando el PDF.")
                     else:
                         await wa.send_text(phone, f"Tu lectura sigue sellada, ${PRICE_MXN} MXN.\nTu link:\n{data.get('payment_link')}")
                     await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
@@ -150,7 +166,7 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
             await wa.send_text(phone, msgs[q_num-1])
         else:
             await save_state(db, state, step="GENERATING", data_update={"q5": text_clean})
-            await wa.send_text(phone, "Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n\nVoy a generar tu carta astral completa con el nuevo diseño limpio de 6 hojas... dame un momento, esto toma magia.")
+            await wa.send_text(phone, "Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n\nVoy a generar tu carta astral completa... dame un momento, esto toma magia.")
             await _generate_and_prepare_payment(db, state, phone)
         return
 
@@ -173,7 +189,7 @@ async def handle_button_click(db: AsyncSession, phone: str, button_id: str):
             try:
                 new_link = await regenerate_payment_link_for_chart(state.collected_data.get("chart_id"), state.collected_data.get("full_name",""), PRICE_MXN)
                 await save_state(db, state, data_update={"payment_link": new_link, "payment_url": new_link})
-                await wa.send_text(phone, f"Aqui tienes tu nuevo link que NO expira:\n{new_link}\n\nPaga ${PRICE_MXN} MXN y te mando tu PDF limpio de 6 hojas.")
+                await wa.send_text(phone, f"Aqui tienes tu nuevo link que NO expira:\n{new_link}\n\nPaga ${PRICE_MXN} MXN y te mando tu PDF.")
             except Exception as e:
                 logger.error(f"Error reenviando: {e}")
                 await wa.send_text(phone, f"Tu link anterior: {state.collected_data.get('payment_link')}\nSi dice Todo listo, escribe 'link' para generar uno nuevo que no expira.")
@@ -219,10 +235,10 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
             interpretation_json=reading, cover_used=cover_used, pdf_path=pdf_path, pdf_ready=True, payment_status="pending")
         db.add(chart); await db.commit(); await db.refresh(chart)
         
-        payment_url = await create_payment_link(amount_mxn=PRICE_MXN, reference_id=chart.id, description=f"Carta Astral 6 Hojas + 5 Tarot - {full_name}")
+        payment_url = await create_payment_link(amount_mxn=PRICE_MXN, reference_id=chart.id, description=f"Carta Astral + 5 Tarot - {full_name}")
         await save_state(db, state, step="AWAITING_PAYMENT", data_update={"chart_id": chart.id, "payment_link": payment_url, "payment_url": payment_url, "payment_sent_at": datetime.utcnow().isoformat()})
         
-        await wa.send_text(phone, f"Tu destino esta sellado, {full_name.split()[0]}.\n\nEres {reading.get('zodiac_western')} en occidente, y vi tus 5 zodiacos alineados.\n\nTus 5 respuestas del tarot ya estan canalizadas en el PDF LIMPIO de 6 hojas con letra grande legible.\n\nPara romper el sello y recibir tu PDF completo, paga ${PRICE_MXN} MXN aqui (link que NO expira):\n\n{payment_url}\n\nEn cuanto se confirme, te lo mando de inmediato.")
+        await wa.send_text(phone, f"Tu destino esta sellado, {full_name.split()[0]}.\n\nEres {reading.get('zodiac_western')} en occidente.\n\nTus 5 respuestas del tarot ya estan canalizadas en el PDF.\n\nPara recibir tu PDF completo, paga ${PRICE_MXN} MXN aqui (link que NO expira):\n\n{payment_url}")
         await wa.send_buttons(phone, "Deseas continuar?", buttons=[{"id": "reenviar_link", "title": "Ya pague / Reenviar"}, {"id": "cancelar_compra", "title": "Cancelar"}])
     except Exception as e:
         logger.error(f"Error generando: {str(e)}", exc_info=True)
@@ -231,7 +247,7 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
 
 async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
     chart.payment_status = "paid"; await db.commit()
-    await wa.send_document(chart.phone_number, chart.pdf_path, caption=f"Aqui esta tu destino completo, {chart.full_name.split()[0]}. Nuevo diseño limpio de 6 hojas. Gracias por confiar en Morgania.")
+    await wa.send_document(chart.phone_number, chart.pdf_path, caption=f"Aqui esta tu destino completo, {chart.full_name.split()[0]}. Gracias por confiar en Morgania.")
     chart.delivered = True; await db.commit()
     result = await db.execute(select(ConversationState).where(ConversationState.phone_number == chart.phone_number))
     state = result.scalar_one_or_none()
