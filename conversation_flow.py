@@ -1,15 +1,15 @@
+
 """
-PATCH v5 - Fix handle_button_reply alias para main.py
-Basado en conversation_flow_v4_FINAL_FIX.py que ya tenias
+FIX v6 - Reenvía link existente y arregla ciclo hola
+Basado en v5 - agrega manejo GENERATING + COMPLETED + reenvío
 """
 
 import logging
-import unicodedata
 from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import ConversationState, User, NatalChart
+from models import ConversationState, NatalChart
 from utils_whatsapp import WhatsAppClient
 from agentes_claude_astro import AstroAgent
 from pdf_generator import build_natal_chart_pdf
@@ -46,18 +46,32 @@ async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
     text_clean = text.strip()
     lower = text_clean.lower()
 
-    if step == "AWAITING_PAYMENT":
+    # Si está en pago, cualquier hola le reenvía el link
+    if step in ["AWAITING_PAYMENT", "GENERATING"]:
         data = state.collected_data or {}
-        if data.get("payment_link") and data.get("payment_sent_at"):
-            if "pagar" not in lower and "reenviar" not in lower and "link" not in lower and "ya pague" not in lower:
-                if lower in ["hola", "ola", "hey"]:
-                    await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.")
-                    await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
-                    return
+        if data.get("payment_link"):
+            if lower in ["hola", "ola", "hey", "pagar", "reenviar", "link", "ya pague", "ya pagué"]:
+                await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.\n\nTu link de pago:\n{data.get('payment_link')}")
+                await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
+                await save_state(db, state, step="AWAITING_PAYMENT")
                 return
+            # si manda cualquier otra cosa, no lo ignoramos, le reenviamos igual
+            if data.get("payment_link") and data.get("payment_sent_at"):
+                if "pagar" not in lower and "reenviar" not in lower and "link" not in lower and "ya pague" not in lower and "ya pagué" not in lower:
+                    if lower in ["hola", "ola", "hey"]:
+                        await wa.send_text(phone, f"Tu lectura sigue sellada, sigues en espera de pago de ${PRICE_MXN} MXN.\nTu link:\n{data.get('payment_link')}")
+                        await wa.send_buttons(phone, "Que deseas hacer?", buttons=[{"id": "reenviar_link", "title": "Reenviar link de pago"}, {"id": "cancelar_compra", "title": "Cancelar lectura"}])
+                        return
+
+    if step == "COMPLETED":
+        # permite reiniciar ciclo
+        if lower in ["hola", "ola", "hey", "otra", "nueva"]:
+            await save_state(db, state, step="MENU", data_update={})
+            await handle_incoming_text(db, phone, "hola")
+            return
 
     if step == "MENU":
-        await wa.send_text(phone, "No es casualidad que llegaras aqui... El poder de las runas celtas nos une esta noche.\nEl destino ya esta escrito en las estrellas, solo hay que leerlo.\n\nSoy Morgan, guardiana de los velos.")
+        await wa.send_text(phone, "No es casualidad que llegaras aqui... El poder de las runas celtas nos une esta noche.\nEl destino ya esta escrito en las estrellas, solo hay que leerlo.\n\nSoy Morgania, guardiana de los velos del tiempo y el destino.")
         await wa.send_text(phone, f"Tu Lectura Completa por ${PRICE_MXN} MXN\n\nTe entrego:\n- Tu Carta Astral completa\n- Afinidades zodiacales\n- Tu signo Celta, Maya, Chino y Egipcio\n- Posicion de los planetas el dia que naciste\n- Y 5 preguntas que le hagas al destino - te respondo Si/No con tirada de tarot\n\nPagas ${PRICE_MXN} MXN solo cuando todo este listo.\n\nAceptas abrir tu destino?")
         await wa.send_buttons(phone, "Elige tu camino:", buttons=[{"id": "quiero_carta", "title": "Si, abrir mi destino"}, {"id": "no_gracias", "title": "No por ahora"}])
         await save_state(db, state, step="AWAITING_SERVICE_CONFIRM")
@@ -190,7 +204,6 @@ async def handle_button_click(db: AsyncSession, phone: str, button_id: str):
     text_equivalent = mapping.get(button_id, button_id)
     await handle_incoming_text(db, phone, text_equivalent)
 
-# FIX para main.py que llama handle_button_reply
 async def handle_button_reply(db: AsyncSession, phone: str, button_id: str):
     return await handle_button_click(db, phone, button_id)
 
@@ -205,7 +218,21 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
     
     try:
         if data.get("chart_id") and data.get("payment_link"):
-            logger.info(f"Pago ya generado para {phone}, evitando duplicado")
+            logger.info(f"Pago ya generado para {phone}, evitando duplicado - REENVIANDO link existente")
+            # FIX: reenviamos link existente en lugar de quedarnos callados
+            await wa.send_text(
+                phone,
+                f"Tu destino ya estaba sellado, {full_name.split()[0] if full_name else ''}.\n\nTu link de pago sigue activo:\n{data.get('payment_link')}\n\nEn cuanto se confirme, te mando tu PDF."
+            )
+            await wa.send_buttons(
+                phone,
+                "Deseas continuar?",
+                buttons=[
+                    {"id": "reenviar_link", "title": "Ya pague / Reenviar"},
+                    {"id": "cancelar_compra", "title": "Cancelar"},
+                ],
+            )
+            await save_state(db, state, step="AWAITING_PAYMENT")
             return
 
         if birth_time:
@@ -335,3 +362,4 @@ def _parse_time(text: str):
         return t.strftime("%H:%M")
     except ValueError:
         return None
+
