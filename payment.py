@@ -89,7 +89,7 @@ async def create_payment_link(amount_mxn: int, reference_id: str, description: s
                 "quantity": 1,
             }],
             mode="payment",
-            success_url = SUCCESS_URL + "?chart_id=" + str(reference_id) + "&session_id={CHECKOUT_SESSION_ID}"
+            success_url=f"{SUCCESS_URL}?chart_id={reference_id}&session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=CANCEL_URL,
             metadata=meta,
             expires_at=expires_at,
