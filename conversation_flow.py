@@ -246,12 +246,19 @@ async def _generate_and_prepare_payment(db: AsyncSession, state: ConversationSta
         await save_state(db, state, step="MENU")
 
 async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
-    chart.payment_status = "paid"; await db.commit()
+    chart.payment_status = "paid"
+    await db.commit()
+    logger.info(f"DELIVER: phone={chart.phone_number} pdf_path={chart.pdf_path} name={chart.full_name}")
+    if not chart.pdf_path:
+        logger.error("DELIVER FALLO: pdf_path es None o vacio")
+        return
     await wa.send_document(chart.phone_number, chart.pdf_path, caption=f"Aqui esta tu destino completo, {chart.full_name.split()[0]}. Gracias por confiar en Morgania.")
-    chart.delivered = True; await db.commit()
+    chart.delivered = True
+    await db.commit()
     result = await db.execute(select(ConversationState).where(ConversationState.phone_number == chart.phone_number))
     state = result.scalar_one_or_none()
-    if state: await save_state(db, state, step="COMPLETED")
+    if state:
+        await save_state(db, state, step="COMPLETED")
 
 async def _ask_full_name(phone: str):
     await wa.send_text(phone, "Perfecto. Para abrir tu destino necesito 3 datos:\n\n1. Nombre completo\n2. Fecha de nacimiento\n3. Hora de nacimiento (si la sabes)\n\nEmpecemos: cual es tu nombre completo?")
