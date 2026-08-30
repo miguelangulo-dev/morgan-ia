@@ -1,3 +1,4 @@
+
 """
 Agente Claude FINAL - Con FIX n8n aplicado
 - max_tokens 4000 -> 8000 en carta simple y completa
@@ -44,12 +45,14 @@ class AstroAgent:
         self.client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         self.model = "claude-sonnet-4-5"
     
-    async def generate_natal_chart_simple(self, birth_date: str, questions: list = None) -> dict:
-        prompt = f"""Eres Morgan, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA SOLO de zodiacos y personalidad.
+    async def generate_natal_chart_simple(self, birth_date: str, questions: list = None, lang: str = "es") -> dict:
+        idioma = "inglés" if lang == "en" else "español"
+        prompt = f"""Responde en {idioma}.
+Eres Morgan, experta en astrología ancestral. Analiza esta fecha y genera carta natal COMPLETA SOLO de zodiacos y personalidad.
 
 FECHA DE NACIMIENTO: {birth_date}
 
-Proporciona SOLO JSON valido, sin acentos, sin caracteres especiales como ¿ ¡, sin tildes, todo en ASCII simple para evitar errores de encoding:
+Proporciona SOLO JSON válido (con acentos permitidos):
 
 {{
   "zodiac_western": "Signo occidental ej: Aries",
@@ -59,16 +62,14 @@ Proporciona SOLO JSON valido, sin acentos, sin caracteres especiales como ¿ ¡,
   "zodiac_egyptian": "Signo egipcio",
   "ascending_sign": "Ascendente ej: Leo",
   "moon_sign": "Signo lunar ej: Tauro",
-  "interpretation": "Parrafo de 12 a 15 lineas detalladas sobre personalidad, destino, energia, proposito de vida, retos y dones. Debe ser profundo y extenso.",
-  "overall_message": "Mensaje final de 5 a 6 lineas, mistico, cierre poderoso"
+  "interpretation": "Párrafo de 12 a 15 líneas detalladas sobre personalidad, destino, energía, propósito de vida, retos y dones. Debe ser profundo y extenso.",
+  "overall_message": "Mensaje final de 5 a 6 líneas, místico, cierre poderoso"
 }}
 
 REGLAS:
-- Responde SOLO con JSON
-- No uses acentos ni tildes
-- No uses simbolos ¿ ¡ 
-- No incluyas tarot_readings aqui
-- Interpretation debe ser LARGA 12-15 lineas minimo
+- Responde SOLO con JSON en {idioma}
+- No incluyas tarot_readings aquí
+- Interpretation debe ser LARGA 12-15 líneas mínimo
 """
         try:
             response = self.client.messages.create(
@@ -79,26 +80,28 @@ REGLAS:
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
                 raise ValueError("Claude devolvio vacio")
-            result = _strip_accents(json.loads(raw_text))
+            result = json.loads(raw_text)
             if questions:
                 result["user_questions"] = questions
-            logger.info(f"OK Carta natal simple para {birth_date}")
+            logger.info(f"OK Carta natal simple para {birth_date} lang={lang}")
             return result
         except Exception as e:
             logger.error(f"Error generando carta natal simple: {str(e)}")
             return None
     
-    async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None) -> dict:
-        prompt = f"""Eres Morgan, guardiana de los velos, experta en astrologia, tarot egipcio y zodiacos ancestrales.
+    async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None, lang: str = "es") -> dict:
+        idioma = "inglés" if lang == "en" else "español"
+        prompt = f"""Responde en {idioma}.
+Eres Morgan, guardiana de los velos, experta en astrología, tarot egipcio y zodiacos ancestrales.
 
 DATOS:
 FECHA: {birth_date}
 HORA: {birth_time}
 LUGAR: {birth_location or "Desconocido"}
 
-Calcula con hora exacta: ascendente, signo lunar, casas astrologicas, posicion planetaria.
+Calcula con hora exacta: ascendente, signo lunar, casas astrológicas, posición planetaria.
 
-Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
+Proporciona SOLO JSON válido (con acentos permitidos):
 
 {{
   "zodiac_western": "Signo occidental",
@@ -108,22 +111,21 @@ Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
   "zodiac_egyptian": "Signo egipcio",
   "ascending_sign": "Ascendente",
   "moon_sign": "Signo lunar",
-  "detailed_interpretation": "Analisis DETALLADO de 12 a 15 lineas minimo. Incluye: casas astrologicas, posicion de planetas al nacer, energia predominante, propositos de vida, karma, dones ocultos, retos. Debe ser extenso, mistico y profundo.",
+  "detailed_interpretation": "Análisis DETALLADO de 12 a 15 líneas mínimo. Incluye: casas astrológicas, posición de planetas al nacer, energía predominante, propósitos de vida, karma, dones ocultos, retos. Debe ser extenso, místico y profundo.",
   "planetary_positions": {{
     "sol": "Aries Casa 1",
     "luna": "Tauro Casa 2",
     "ascendente": "Aries",
     "medio_cielo": "Capricornio"
   }},
-  "overall_message": "Mensaje final mistico de 5 a 6 lineas que cierre"
+  "overall_message": "Mensaje final místico de 5 a 6 líneas que cierre"
 }}
 
-REGLAS CRITICAS:
-- Responde SOLO JSON valido
-- NO uses acentos, tildes, ni simbolos raros ¿ ¡
-- detailed_interpretation LARGA 12-15 lineas, no 5-6
-- No incluyas tarot_readings aqui, el tarot lo hace otra funcion
-- overall_message 5-6 lineas, no 2-3
+REGLAS CRÍTICAS:
+- Responde SOLO JSON válido en {idioma}
+- detailed_interpretation LARGA 12-15 líneas, no 5-6
+- No incluyas tarot_readings aquí, el tarot lo hace otra función
+- overall_message 5-6 líneas, no 2-3
 """
         try:
             response = self.client.messages.create(
@@ -134,10 +136,10 @@ REGLAS CRITICAS:
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
                 raise ValueError("Claude devolvio vacio")
-            result = _strip_accents(json.loads(raw_text))
+            result = json.loads(raw_text)
             if questions:
                 result["user_questions"] = questions
-            logger.info(f"OK Carta natal completa para {birth_date}")
+            logger.info(f"OK Carta natal completa para {birth_date} lang={lang}")
             return result
         except Exception as e:
             logger.error(f"Error generando carta natal completa: {str(e)}")
@@ -192,15 +194,17 @@ REGLAS:
             logger.error(f"Error generando tirada tarot: {str(e)}")
             return None
     
-    async def generate_zodiac_affinity(self, user_zodiac: str, target_zodiac: str) -> dict:
-        prompt = f"""Eres experto en compatibilidad zodiacal.
+    async def generate_zodiac_affinity(self, user_zodiac: str, target_zodiac: str, lang: str = "es") -> dict:
+        idioma = "inglés" if lang == "en" else "español"
+        prompt = f"""Responde en {idioma}.
+Eres experto en compatibilidad zodiacal.
 
 SIGNO USUARIO: {user_zodiac}
 SIGNO OBJETIVO: {target_zodiac}
 
-Considera elementos, polaridad, emocional, intelectual, fisica y quimica.
+Considera elementos, polaridad, emocional, intelectual, física y química.
 
-JSON solo, sin acentos:
+JSON válido con acentos permitidos:
 
 {{
   "user_zodiac": "{user_zodiac}",
@@ -213,11 +217,11 @@ JSON solo, sin acentos:
     "physical": 9,
     "friendship": 9
   }},
-  "interpretation": "Parrafo de 8 a 10 lineas explicando compatibilidad entre signos, dinamica, retos y fortalezas",
-  "advice": "Consejo especifico de 5 a 6 lineas para esta pareja"
+  "interpretation": "Párrafo de 8 a 10 líneas explicando compatibilidad entre signos, dinámica, retos y fortalezas",
+  "advice": "Consejo específico de 5 a 6 líneas para esta pareja"
 }}
 
-Solo JSON, sin acentos ni simbolos raros.
+Solo JSON en {idioma}.
 """
         try:
             response = self.client.messages.create(
@@ -228,8 +232,8 @@ Solo JSON, sin acentos ni simbolos raros.
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
                 raise ValueError("Claude devolvio vacio")
-            result = _strip_accents(json.loads(raw_text))
-            logger.info(f"OK Afinidad: {user_zodiac} + {target_zodiac}")
+            result = json.loads(raw_text)
+            logger.info(f"OK Afinidad: {user_zodiac} + {target_zodiac} lang={lang}")
             return result
         except Exception as e:
             logger.error(f"Error calculando afinidad: {str(e)}")
