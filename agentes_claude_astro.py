@@ -1,7 +1,8 @@
 """
-Agente Claude FINAL - FIX Railway Crashed + birth_place + gender + sin azteca + planetary_positions
-Max_tokens 4000, prompts 12-15 lineas, tarot 5-6 lineas
-Versión corregida con planetary_positions para página 4 Posplanetas
+Agente Claude FINAL - Con FIX n8n aplicado
+- max_tokens 4000 -> 8000 en carta simple y completa
+- tarot separado del calculo de carta (sin questions_text y sin tarot_readings)
+- generate_tarot_reading con metodo Tirada de Decision 1-4 cartas (cards)
 """
 
 import anthropic
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 def _extract_json(raw_text: str) -> str:
+    """Quita fences de markdown (```json ... ```) si Claude los agrega."""
     text = raw_text.strip()
     if "```" in text:
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
@@ -42,24 +44,10 @@ class AstroAgent:
         self.client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         self.model = "claude-sonnet-4-5"
     
-    async def generate_natal_chart_simple(self, birth_date: str, questions: list = None, birth_place: str = None, gender: str = None) -> dict:
-        questions_text = ""
-        if questions:
-            q_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
-            questions_text = f"""
-PREGUNTAS AL TAROT (5 preguntas del usuario):
-{q_str}
-
-Para cada pregunta, incluye en el JSON final un objeto tarot con:
-- question, card, answer (Si/No), interpretation de 4-5 lineas explicando carta y simbologia
-"""
-
-        prompt = f"""Eres Morgania, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA.
+    async def generate_natal_chart_simple(self, birth_date: str, questions: list = None) -> dict:
+        prompt = f"""Eres Morgan, experta en astrologia ancestral. Analiza esta fecha y genera carta natal COMPLETA SOLO de zodiacos y personalidad.
 
 FECHA DE NACIMIENTO: {birth_date}
-LUGAR: {birth_place or "No especificado"}
-GENERO: {gender or "No especificado"}
-{questions_text}
 
 Proporciona SOLO JSON valido, sin acentos, sin caracteres especiales como ¿ ¡, sin tildes, todo en ASCII simple para evitar errores de encoding:
 
@@ -69,43 +57,23 @@ Proporciona SOLO JSON valido, sin acentos, sin caracteres especiales como ¿ ¡,
   "zodiac_celtic": "Signo celta ej: Roble",
   "zodiac_mayan": "Signo maya",
   "zodiac_egyptian": "Signo egipcio",
+  "ascending_sign": "Ascendente ej: Leo",
+  "moon_sign": "Signo lunar ej: Tauro",
   "interpretation": "Parrafo de 12 a 15 lineas detalladas sobre personalidad, destino, energia, proposito de vida, retos y dones. Debe ser profundo y extenso.",
-  "planetary_positions": {{
-    "sol": "Aries Casa 1",
-    "luna": "Tauro Casa 2",
-    "mercurio": "Geminis Casa 3",
-    "venus": "Cancer Casa 4",
-    "marte": "Leo Casa 5",
-    "jupiter": "Virgo Casa 6",
-    "saturno": "Libra Casa 7",
-    "urano": "Escorpio Casa 8",
-    "neptuno": "Sagitario Casa 9",
-    "pluton": "Capricornio Casa 10"
-  }},
-  "tarot_readings": [
-    {{
-      "question": "texto pregunta 1",
-      "card": "Nombre de carta egipcia con numero romano ej: El Loto XVIII",
-      "answer": "Si o No",
-      "interpretation": "Parrafo de 5 a 6 lineas explicando que significa la carta, su simbologia egipcia y como responde a la pregunta especifica del usuario"
-    }}
-  ],
-  "overall_message": "Mensaje final de 5 a 6 lineas, mistico, cierre poderoso que una todas las respuestas"
+  "overall_message": "Mensaje final de 5 a 6 lineas, mistico, cierre poderoso"
 }}
 
 REGLAS:
 - Responde SOLO con JSON
 - No uses acentos ni tildes
 - No uses simbolos ¿ ¡ 
-- Si hay preguntas, genera tarot_readings con las 5
+- No incluyas tarot_readings aqui
 - Interpretation debe ser LARGA 12-15 lineas minimo
-- planetary_positions obligatorio con 10 planetas
 """
-        
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=4000,
+                max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw_text = _extract_json(response.content[0].text)
@@ -114,41 +82,21 @@ REGLAS:
             result = _strip_accents(json.loads(raw_text))
             if questions:
                 result["user_questions"] = questions
-            if birth_place:
-                result["birth_place"] = birth_place
-            if gender:
-                result["birth_gender"] = gender
             logger.info(f"OK Carta natal simple para {birth_date}")
             return result
         except Exception as e:
             logger.error(f"Error generando carta natal simple: {str(e)}")
             return None
     
-    async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None, gender: str = None) -> dict:
-        questions_text = ""
-        if questions:
-            q_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
-            questions_text = f"""
-PREGUNTAS AL TAROT - EL USUARIO HIZO 5 PREGUNTAS AL DESTINO:
-{q_str}
-
-IMPORTANTE: Para CADA una de esas 5 preguntas debes hacer tirada tarot egipcio:
-- Elige carta adecuada (no siempre la misma, varia segun pregunta)
-- Responde Si/No claro
-- Explica carta y simbologia en 5-6 lineas
-- Relaciona con su pregunta especifica
-"""
-
-        prompt = f"""Eres Morgania, guardiana de los velos del tiempo y el destino, experta en astrologia, tarot egipcio y zodiacos ancestrales.
+    async def generate_natal_chart_complete(self, birth_date: str, birth_time: str, birth_location: str = None, questions: list = None) -> dict:
+        prompt = f"""Eres Morgan, guardiana de los velos, experta en astrologia, tarot egipcio y zodiacos ancestrales.
 
 DATOS:
 FECHA: {birth_date}
 HORA: {birth_time}
 LUGAR: {birth_location or "Desconocido"}
-GENERO: {gender or "No especificado"}
-{questions_text}
 
-Calcula con hora exacta y lugar: ascendente, signo lunar, casas astrologicas, posicion planetaria. Considera la energia del lugar y genero.
+Calcula con hora exacta: ascendente, signo lunar, casas astrologicas, posicion planetaria.
 
 Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
 
@@ -162,43 +110,25 @@ Proporciona SOLO JSON valido, sin acentos, sin tildes, sin ¿ ¡, ASCII simple:
   "moon_sign": "Signo lunar",
   "detailed_interpretation": "Analisis DETALLADO de 12 a 15 lineas minimo. Incluye: casas astrologicas, posicion de planetas al nacer, energia predominante, propositos de vida, karma, dones ocultos, retos. Debe ser extenso, mistico y profundo.",
   "planetary_positions": {{
-    "sol": "Aries Casa 10 grado 15",
-    "luna": "Tauro Casa 11 grado 3",
-    "mercurio": "Geminis Casa 1 grado 22",
-    "venus": "Cancer Casa 2 grado 8",
-    "marte": "Leo Casa 3 grado 19",
-    "jupiter": "Virgo Casa 4 grado 5",
-    "saturno": "Libra Casa 5 grado 27",
-    "urano": "Escorpio Casa 6 grado 11",
-    "neptuno": "Sagitario Casa 7 grado 14",
-    "pluton": "Capricornio Casa 8 grado 29",
-    "ascendente": "Acuario Casa 1",
-    "medio_cielo": "Escorpio Casa 10"
+    "sol": "Aries Casa 1",
+    "luna": "Tauro Casa 2",
+    "ascendente": "Aries",
+    "medio_cielo": "Capricornio"
   }},
-  "tarot_readings": [
-    {{
-      "question": "pregunta del usuario",
-      "card": "Nombre carta egipcia con numero romano",
-      "answer": "Si o No",
-      "interpretation": "5 a 6 lineas explicando simbologia de la carta egipcia y que significa para esta pregunta especifica"
-    }}
-  ],
-  "overall_message": "Mensaje final mistico de 5 a 6 lineas que cierre y una todas las lecturas, dando consejo general"
+  "overall_message": "Mensaje final mistico de 5 a 6 lineas que cierre"
 }}
 
 REGLAS CRITICAS:
 - Responde SOLO JSON valido
 - NO uses acentos, tildes, ni simbolos raros ¿ ¡
 - detailed_interpretation LARGA 12-15 lineas, no 5-6
-- Si hay 5 preguntas, tarot_readings debe tener 5 objetos, cada uno con carta DIFERENTE
+- No incluyas tarot_readings aqui, el tarot lo hace otra funcion
 - overall_message 5-6 lineas, no 2-3
-- planetary_positions obligatorio con 10-12 posiciones
 """
-        
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=4000,
+                max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}]
             )
             raw_text = _extract_json(response.content[0].text)
@@ -207,63 +137,55 @@ REGLAS CRITICAS:
             result = _strip_accents(json.loads(raw_text))
             if questions:
                 result["user_questions"] = questions
-            if birth_location:
-                result["birth_place"] = birth_location
-            if gender:
-                result["birth_gender"] = gender
             logger.info(f"OK Carta natal completa para {birth_date}")
             return result
         except Exception as e:
             logger.error(f"Error generando carta natal completa: {str(e)}")
             return None
     
-    async def generate_tarot_reading(self, questions: list, tarot_pdf_context: str = "") -> dict:
+    async def generate_tarot_reading(self, questions: list, lang: str = "es") -> dict:
         questions_str = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
-        
-        prompt = f"""Eres experto en tarot egipcio. Responde 5 preguntas con Si/No y carta.
+        idioma = "espanol" if lang == "es" else "ingles"
+        prompt = f"""Eres Morgania, tarotista experta en TAROT EGIPCIO (78 laminas).
+Responde en {idioma}. Usa el metodo real de "Tirada de Decision" del Tarot Egipcio.
 
-PREGUNTAS:
+METODO PARA CADA PREGUNTA DE SI/NO:
+- Saca de 1 a 4 cartas del Tarot Egipcio (varia el numero y las cartas segun la energia de la pregunta; NO repitas siempre la misma).
+- El veredicto Si/No surge de CRUZAR las cartas entre si (no de una carta suelta): cartas luminosas/de accion (El Mago, El Triunfo, La Inspiracion, El Argonauta, La Resurreccion, La Transmutacion, El Regreso, El Prodigio, La Conjetura, La Consumacion) empujan hacia SI; cartas de bloqueo/densas (La Pasion, La Fragilidad, La Esperanza invertida, El Desasosiego, Impedimentos, La Desorientacion, El Resentimiento, La Incertidumbre) empujan hacia NO. La combinacion define la respuesta.
+- Considera el CONTEXTO de la pregunta (amor, trabajo, salud, dinero) para traducir el simbolo.
+
+PREGUNTAS DEL CONSULTANTE:
 {questions_str}
 
-Para cada pregunta:
-1. Elige carta egipcia DIFERENTE segun energia (no repitas siempre El Loto, varia)
-2. Responde Si o No claro
-3. Interpreta carta en 5-6 lineas
-
-JSON solo, sin acentos, sin ¿ ¡, ASCII:
-
+Devuelve SOLO JSON valido (sin markdown). Formato:
 {{
   "readings": [
     {{
-      "question": "texto pregunta",
-      "card": "Nombre carta egipcia con numero romano",
-      "answer": "Si",
-      "interpretation": "5 a 6 lineas de interpretacion con simbologia egipcia explicada y relacionada a la pregunta"
+      "question": "texto exacto de la pregunta",
+      "cards": "1 a 4 cartas separadas por ' + ' con su numero, ej: La Carroza VII + El Loco 0",
+      "answer": "Si" o "No",
+      "interpretation": "3 a 4 lineas: que dicen las cartas EN CONJUNTO y por que dan ese Si/No para esta pregunta concreta"
     }}
   ],
-  "overall_message": "Mensaje general de 5 a 6 lineas mistico que una todo"
+  "overall_message": "Cierre mistico de 4 a 5 lineas que una las 5 respuestas"
 }}
 
 REGLAS:
-- Solo JSON
-- Sin acentos
-- Carta del ejemplo es solo ejemplo, tu eliges carta real
-- overall_message largo 5-6 lineas
-- Cada interpretation 5-6 lineas
-"""
-        
+- Exactamente {len(questions)} objetos en "readings", uno por pregunta y en orden.
+- Cada respuesta debe ser un Si o No claro.
+- Cada tirada usa cartas DIFERENTES.
+- Solo JSON."""
+
         try:
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=4000,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                max_tokens=3500,
+                messages=[{"role": "user", "content": prompt}],
             )
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
                 raise ValueError("Claude devolvio vacio")
-            result = _strip_accents(json.loads(raw_text))
+            result = json.loads(raw_text)
             logger.info(f"OK Tirada tarot para {len(questions)} preguntas")
             return result
         except Exception as e:
@@ -276,7 +198,7 @@ REGLAS:
 SIGNO USUARIO: {user_zodiac}
 SIGNO OBJETIVO: {target_zodiac}
 
-Considera elementos, polaridad, emocional, intelectual, fisica.
+Considera elementos, polaridad, emocional, intelectual, fisica y quimica.
 
 JSON solo, sin acentos:
 
@@ -297,14 +219,11 @@ JSON solo, sin acentos:
 
 Solo JSON, sin acentos ni simbolos raros.
 """
-        
         try:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4000,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                messages=[{"role": "user", "content": prompt}]
             )
             raw_text = _extract_json(response.content[0].text)
             if not raw_text:
