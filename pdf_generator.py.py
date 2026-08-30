@@ -1,344 +1,129 @@
 """
-pdf_generator.py - VERSION NUEVA
-Plantillas: JPEG por pagina, texto dibujado con Pillow
-Paginas en orden:
-  1. Portada (segun signo occidental, carpeta Portadas/)
-  2. Carta Astral (CartaAstral.jpeg)
-  3. Afinidades Zodiacales (AfinidadesyZodiacos.jpeg)
-  4. Tarot Egipcio (LecturaTarot.jpeg)
-  5. Horoscopo Semanal (Horoscoposemanal.jpg)
+pdf_generator.py - Overlay de texto sobre plantillas (Pillow)
+Coordenadas en proporcion (0-1) faciles de calibrar por plantilla.
 """
-
-import os
-import logging
-import random
-import unicodedata
+import os, logging
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
-
-BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
-PORTADAS_DIR = os.path.join(BASE_DIR, "Portadas")
-CONTENIDO_DIR= os.path.join(BASE_DIR, "Contenido")
-OUTPUT_DIR   = os.path.join(BASE_DIR, "generated_pdfs")
+TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "Contenido")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "generated_pdfs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Nombres exactos de las plantillas en /Contenido
-T_CARTA     = "CartaAstral.jpeg"
-T_AFINIDADES= "AfinidadesyZodiacos.jpeg"
-T_TAROT     = "LecturaTarot.jpeg"
-T_HOROSCOPO = "Horoscoposemanal.jpg"
+CANVAS_W, CANVAS_H = 1240, 1754  # A4 ~150dpi
 
-# Mapa de signo -> variantes para buscar en nombres de archivo de portada
-SIGNOS_MAP = {
-    "aries":       ["aries"],
-    "tauro":       ["tauro","taurus"],
-    "taurus":      ["tauro","taurus"],
-    "geminis":     ["geminis","gemini"],
-    "gemini":      ["geminis","gemini"],
-    "cancer":      ["cancer"],
-    "leo":         ["leo"],
-    "virgo":       ["virgo"],
-    "libra":       ["libra"],
-    "escorpio":    ["escorpio","scorpio","scorpion"],
-    "scorpio":     ["escorpio","scorpio","scorpion"],
-    "sagitario":   ["sagitario","sagittarius"],
-    "sagittarius": ["sagitario","sagittarius"],
-    "capricornio": ["capricornio","capricorn"],
-    "capricorn":   ["capricornio","capricorn"],
-    "acuario":     ["acuario","aquarius"],
-    "aquarius":    ["acuario","aquarius"],
-    "piscis":      ["piscis","pisces"],
-    "pisces":      ["piscis","pisces"],
+CONTENT_JPEG_ORDER = [
+    "1 Escencia solar.jpeg",
+    "2 Afinidades Zodiacales.jpeg",
+    "3 Tarot Egipcio.jpeg",
+    "4 Posplanetas.jpeg",
+]
+
+# ---- CALIBRACION: ajusta estos valores (x,y en proporcion 0-1) ----
+# Para calibrar: abre la imagen, mira donde empieza cada campo, divide pixel/ancho.
+COORDS = {
+    "3 Tarot Egipcio.jpeg": {   # 5 recuadros Pregunta 1..5
+        "q1": (0.20, 0.28), "q2": (0.20, 0.42),
+        "q3": (0.20, 0.56), "q4": (0.20, 0.70), "q5": (0.20, 0.84),
+    },
+    "4 Posplanetas.jpeg": {
+        "sol": (0.50, 0.40), "luna": (0.62, 0.34), "mercurio": (0.40, 0.44),
+        "venus": (0.44, 0.32), "marte": (0.58, 0.47), "jupiter": (0.70, 0.42),
+        "saturno": (0.32, 0.37), "urano": (0.55, 0.57), "neptuno": (0.66, 0.62),
+        "pluton": (0.36, 0.54), "ascendente": (0.22, 0.52), "medio_cielo": (0.50, 0.24),
+    },
 }
+COLOR_DARK = (35, 25, 10)
+COLOR_GOLD = (180, 140, 20)
 
-def _norm(s):
-    """quita acentos y pone en minusculas para comparar"""
-    n = unicodedata.normalize("NFKD", s.lower())
-    return "".join(c for c in n if not unicodedata.combining(c))
-
-def _pick_portada(signo: str) -> str:
-    if not os.path.isdir(PORTADAS_DIR):
-        raise FileNotFoundError(f"No existe carpeta Portadas/: {PORTADAS_DIR}")
-    # Solo extensiones que Pillow puede abrir directamente (excluye .pdf)
-    exts = (".jpeg", ".jpg", ".png")
-    all_files = [f for f in os.listdir(PORTADAS_DIR) if f.lower().endswith(exts)]
-    if not all_files:
-        raise FileNotFoundError(f"No hay portadas en {PORTADAS_DIR}")
-    signo_norm = _norm(signo)
-    variantes  = SIGNOS_MAP.get(signo_norm, [signo_norm])
-    matching   = [f for f in all_files if any(v in _norm(f) for v in variantes)]
-    pool = matching if matching else all_files
-    chosen = random.choice(pool[:3] if len(pool) >= 3 else pool)
-    logger.info(f"Portada elegida: {chosen} para signo {signo}")
-    return chosen
-
-def _load_font(size: int, bold: bool = False):
-    paths_bold = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "DejaVuSans-Bold.ttf",
-    ]
-    paths_reg = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "DejaVuSans.ttf",
-    ]
-    paths = paths_bold if bold else paths_reg
-    for p in paths:
+def _font(size, bold=False):
+    for name in (["DejaVuSans-Bold.ttf"] if bold else ["DejaVuSans.ttf"]):
         try:
-            return ImageFont.truetype(p, size)
-        except:
-            continue
+            return ImageFont.truetype(name, size)
+        except Exception:
+            pass
     return ImageFont.load_default()
 
-def _wrap(text: str, max_chars: int = 70):
-    """Parte texto largo en lineas de max_chars"""
-    if not text:
-        return []
-    words = str(text).split()
-    lines, cur = [], ""
+def _wrap(draw, text, font, max_w):
+    if not text: return []
+    words, lines, cur = str(text).split(), [], ""
     for w in words:
-        if len(cur + " " + w) <= max_chars:
-            cur = (cur + " " + w).strip()
+        test = (cur + " " + w).strip()
+        if draw.textlength(test, font=font) <= max_w:
+            cur = test
         else:
-            if cur:
-                lines.append(cur)
+            if cur: lines.append(cur)
             cur = w
-    if cur:
-        lines.append(cur)
+    if cur: lines.append(cur)
     return lines
 
+def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    safe = "".join(c for c in full_name if c.isalnum() or c == " ").strip().replace(" ", "_")
+    pdf_path = os.path.join(OUTPUT_DIR, f"{safe}_{ts}.pdf")
 
-# ===========================================================================
-# PAGINA 1: PORTADA (solo imagen, sin texto encima - el signo ya esta impreso)
-# ===========================================================================
-def _page_portada(signo: str) -> Image.Image:
-    fname = _pick_portada(signo)
-    path  = os.path.join(PORTADAS_DIR, fname)
-    raw = Image.open(path)
-    # Si tiene canal alpha (PNG RGBA/P), componer sobre fondo blanco para evitar fondo negro
-    if raw.mode in ("RGBA", "P", "LA"):
-        bg  = Image.new("RGB", raw.size, (255, 255, 255))
-        src = raw.convert("RGBA")
-        bg.paste(src, mask=src.split()[3])
-        img = bg
-    else:
-        img = raw.convert("RGB")
-    img = img.resize((900, 1600), Image.LANCZOS)
-    return img
-
-
-# ===========================================================================
-# PAGINA 2: CARTA ASTRAL
-# Campos: NOMBRE, Fecha, Hora, Lugar, Ascendente, Descendente, MC, IC
-# ===========================================================================
-def _page_carta_astral(reading: dict, full_name: str, birth_date: str, birth_time: str) -> Image.Image:
-    path = os.path.join(CONTENIDO_DIR, T_CARTA)
-    img  = Image.open(path).convert("RGB").resize((900, 1600), Image.LANCZOS)
-    draw = ImageDraw.Draw(img)
-
-    f_big  = _load_font(28, bold=True)
-    f_med  = _load_font(22)
-    f_sm   = _load_font(18)
-    COLOR  = (60, 30, 10)     # marron oscuro, legible sobre pergamino
-
-    # --- NOMBRE (debajo del scroll, y≈390) ---
-    draw.text((130, 385), full_name[:50], fill=COLOR, font=f_big)
-
-    # --- Fecha / Hora / Lugar (y≈460) ---
-    hora_str  = birth_time or "No especificada"
-    lugar_str = str(reading.get("birth_place", ""))[:25] or "No especificado"
-    draw.text((105, 458), birth_date,  fill=COLOR, font=f_med)
-    draw.text((330, 458), hora_str,    fill=COLOR, font=f_med)
-    draw.text((525, 458), lugar_str,   fill=COLOR, font=f_med)
-
+    western  = reading.get("zodiac_western", "");  chinese = reading.get("zodiac_chinese", "")
+    celtic   = reading.get("zodiac_celtic", "");   mayan   = reading.get("zodiac_mayan", "")
+    egyptian = reading.get("zodiac_egyptian", "")
+    asc  = reading.get("ascending_sign", "");      moon = reading.get("moon_sign", "")
+    interp = reading.get("detailed_interpretation", reading.get("interpretation", ""))
+    tarot  = reading.get("tarot_readings", []);    overall = reading.get("overall_message", "")
+    place  = reading.get("birth_place", "No especificado")
+    gender = reading.get("birth_gender", "No especificado")
     planets = reading.get("planetary_positions", {})
 
-    # --- Ascendente AC (caja izq, y≈1350) ---
-    ac = str(planets.get("ascendente", reading.get("ascending_sign", "")))
-    draw.text((90, 1355), ac[:35], fill=COLOR, font=f_sm)
+    pages = []
+    for jpeg in CONTENT_JPEG_ORDER:
+        path = os.path.join(TEMPLATES_DIR, jpeg)
+        if not os.path.exists(path):
+            logger.warning(f"Falta fondo: {path}"); continue
+        img = Image.open(path).convert("RGB").resize((CANVAS_W, CANVAS_H))
+        d = ImageDraw.Draw(img); W, H = img.size
+        f_title, f_reg, f_small = _font(34, True), _font(24), _font(20)
 
-    # --- Descendente DC (caja der, y≈1355) ---
-    dc = str(planets.get("descendente", ""))
-    draw.text((490, 1355), dc[:35], fill=COLOR, font=f_sm)
+        if "1 Escencia" in jpeg:
+            d.text((int(W*0.10), int(H*0.10)), f"{full_name}", fill=COLOR_DARK, font=f_title)
+            d.text((int(W*0.10), int(H*0.14)), f"{western}  |  {birth_date}  {birth_time or ''}", fill=COLOR_DARK, font=f_reg)
+            d.text((int(W*0.10), int(H*0.17)), f"Lugar: {place}   Genero: {gender}", fill=COLOR_DARK, font=f_reg)
+            if asc or moon:
+                d.text((int(W*0.10), int(H*0.20)), f"Ascendente: {asc}   Luna: {moon}", fill=COLOR_DARK, font=f_reg)
+            y = int(H*0.25)
+            for line in _wrap(d, interp, f_small, int(W*0.80))[:26]:
+                d.text((int(W*0.10), y), line, fill=COLOR_DARK, font=f_small); y += 28
 
-    # --- Medio Cielo MC (caja izq, y≈1510) ---
-    mc = str(planets.get("medio_cielo", ""))
-    draw.text((90, 1510), mc[:35], fill=COLOR, font=f_sm)
+        elif "2 Afinidades" in jpeg:
+            rows = [("Occidental", western), ("Chino", chinese), ("Celta", celtic),
+                    ("Maya", mayan), ("Egipcio", egyptian)]
+            y = int(H*0.22)
+            for label, val in rows:
+                d.text((int(W*0.12), y), f"{label}: {val}", fill=COLOR_DARK, font=f_reg); y += int(H*0.05)
 
-    # --- Fondo del Cielo IC (caja der, y≈1510) ---
-    ic = str(planets.get("fondo_cielo", ""))
-    draw.text((490, 1510), ic[:35], fill=COLOR, font=f_sm)
+        elif "3 Tarot" in jpeg:
+            c = COORDS["3 Tarot Egipcio.jpeg"]
+            for i, t in enumerate(tarot[:5], 1):
+                x, yr = c[f"q{i}"]; x = int(W*x); y = int(H*yr)
+                cards = t.get("cards", t.get("card", ""))
+                d.text((x, y), f"{cards}  ->  {t.get('answer','')}", fill=COLOR_GOLD, font=_font(22, True))
+                yy = y + 30
+                for line in _wrap(d, t.get("interpretation",""), f_small, int(W*0.72))[:3]:
+                    d.text((x, yy), line, fill=COLOR_DARK, font=f_small); yy += 24
 
-    return img
+        elif "4 Posplanetas" in jpeg:
+            for key, (xr, yr) in COORDS["4 Posplanetas.jpeg"].items():
+                x, y = int(W*xr), int(H*yr)
+                d.text((x-40, y-14), key.upper(), fill=COLOR_GOLD, font=_font(20, True))
+                pos = planets.get(key, "")
+                if pos: d.text((x-40, y+10), str(pos)[:22], fill=COLOR_DARK, font=f_small)
+            if overall:
+                yy = int(H*0.88)
+                for line in _wrap(d, overall, f_small, int(W*0.82))[:4]:
+                    d.text((int(W*0.10), yy), line, fill=COLOR_DARK, font=f_small); yy += 24
 
+        pages.append(img)
 
-# ===========================================================================
-# PAGINA 3: AFINIDADES ZODIACALES
-# Campos: Polaridad, Amistad, Fisica, Intelectual, 4 zodiacos
-# ===========================================================================
-def _page_afinidades(reading: dict) -> Image.Image:
-    path = os.path.join(CONTENIDO_DIR, T_AFINIDADES)
-    img  = Image.open(path).convert("RGB").resize((900, 1600), Image.LANCZOS)
-    draw = ImageDraw.Draw(img)
-
-    f_med = _load_font(20)
-    f_sm  = _load_font(17)
-
-    interp = reading.get("detailed_interpretation", reading.get("interpretation", ""))
-
-    # Polaridad (rojo)
-    lines = _wrap(interp, 60)
-    draw.text((110, 335), lines[0] if lines else "", fill=(160, 30, 30), font=f_med)
-    if len(lines) > 1:
-        draw.text((110, 360), lines[1], fill=(160, 30, 30), font=f_sm)
-
-    # Amistad (azul) — siguiente bloque del texto
-    draw.text((110, 490), lines[2] if len(lines) > 2 else "", fill=(30, 60, 160), font=f_med)
-    draw.text((110, 515), lines[3] if len(lines) > 3 else "", fill=(30, 60, 160), font=f_sm)
-
-    # Fisica (verde)
-    draw.text((110, 645), lines[4] if len(lines) > 4 else "", fill=(30, 130, 60), font=f_med)
-    draw.text((110, 670), lines[5] if len(lines) > 5 else "", fill=(30, 130, 60), font=f_sm)
-
-    # Intelectual (dorado)
-    draw.text((110, 795), lines[6] if len(lines) > 6 else "", fill=(160, 120, 10), font=f_med)
-    draw.text((110, 820), lines[7] if len(lines) > 7 else "", fill=(160, 120, 10), font=f_sm)
-
-    COLOR = (60, 30, 10)
-
-    # Zodiaco Chino (caja izq)
-    chino = str(reading.get("zodiac_chinese", ""))
-    for i, l in enumerate(_wrap(chino, 28)[:3]):
-        draw.text((70, 1080 + i*22), l, fill=COLOR, font=f_sm)
-
-    # Zodiaco Celta (caja der)
-    celta = str(reading.get("zodiac_celtic", ""))
-    for i, l in enumerate(_wrap(celta, 28)[:3]):
-        draw.text((470, 1080 + i*22), l, fill=COLOR, font=f_sm)
-
-    # Zodiaco Maya (caja izq)
-    maya = str(reading.get("zodiac_mayan", ""))
-    for i, l in enumerate(_wrap(maya, 28)[:3]):
-        draw.text((70, 1310 + i*22), l, fill=COLOR, font=f_sm)
-
-    # Zodiaco Egipcio (caja der)
-    egipcio = str(reading.get("zodiac_egyptian", ""))
-    for i, l in enumerate(_wrap(egipcio, 28)[:3]):
-        draw.text((470, 1310 + i*22), l, fill=COLOR, font=f_sm)
-
-    return img
-
-
-# ===========================================================================
-# PAGINA 4: TAROT EGIPCIO
-# Pregunta + Carta + Respuesta Si/No + Interpretacion
-# 5 secciones de colores: rojo, azul, amarillo, verde, morado
-# ===========================================================================
-def _page_tarot(reading: dict) -> Image.Image:
-    path = os.path.join(CONTENIDO_DIR, T_TAROT)
-    img  = Image.open(path).convert("RGB").resize((900, 1600), Image.LANCZOS)
-    draw = ImageDraw.Draw(img)
-
-    f_sm  = _load_font(16)
-    f_med = _load_font(18)
-
-    tarot_list = reading.get("tarot_readings", [])
-
-    # Y base de cada seccion (cabecera de color)
-    SECCIONES = [
-        (430,  (200, 255, 255, 255)),   # roja  -> texto oscuro
-        (640,  (200, 255, 255, 255)),   # azul
-        (850,  (200, 255, 255, 255)),   # amarilla
-        (1060, (200, 255, 255, 255)),   # verde
-        (1270, (200, 255, 255, 255)),   # morada
-    ]
-    TEXT_COLOR = (30, 15, 5)
-
-    for idx, (y_base, _) in enumerate(SECCIONES):
-        if idx >= len(tarot_list):
-            break
-        t = tarot_list[idx]
-        q    = str(t.get("question", ""))[:70]
-        card = str(t.get("card", ""))[:50]
-        ans  = str(t.get("answer", ""))
-        interp = str(t.get("interpretation", ""))
-
-        # Pregunta (encima de la caja de color)
-        draw.text((90, y_base - 20), f"P{idx+1}: {q}", fill=TEXT_COLOR, font=f_sm)
-        # Carta y respuesta
-        draw.text((90, y_base + 10), f"{card} — {ans}", fill=TEXT_COLOR, font=f_med)
-        # Interpretacion (2 lineas)
-        for i, l in enumerate(_wrap(interp, 75)[:2]):
-            draw.text((90, y_base + 38 + i*20), l, fill=TEXT_COLOR, font=f_sm)
-
-    return img
-
-
-# ===========================================================================
-# PAGINA 5: HOROSCOPO SEMANAL
-# Secciones: Amor, Dinero, Salud, Trabajo, Consejo
-# ===========================================================================
-def _page_horoscopo(reading: dict) -> Image.Image:
-    path = os.path.join(CONTENIDO_DIR, T_HOROSCOPO)
-    img  = Image.open(path).convert("RGB").resize((900, 1600), Image.LANCZOS)
-    draw = ImageDraw.Draw(img)
-
-    f_sm  = _load_font(16)
-    COLOR = (60, 30, 10)
-
-    overall = str(reading.get("overall_message", ""))
-    interp  = reading.get("detailed_interpretation", reading.get("interpretation", ""))
-    lines_interp = _wrap(str(interp), 65)
-
-    # Usamos partes del overall_message y la interpretacion para llenar las 5 secciones
-    overall_lines = _wrap(overall, 65)
-
-    SECCIONES_Y = [330, 570, 810, 1050, 1290]
-    TEXTOS = [
-        overall_lines[0:2],    # Amor
-        overall_lines[2:4] if len(overall_lines) > 2 else lines_interp[0:2],
-        overall_lines[4:6] if len(overall_lines) > 4 else lines_interp[2:4],
-        lines_interp[4:6] if len(lines_interp) > 4 else lines_interp[0:2],
-        lines_interp[6:8] if len(lines_interp) > 6 else lines_interp[0:2],
-    ]
-
-    for y, text_lines in zip(SECCIONES_Y, TEXTOS):
-        for i, l in enumerate(text_lines[:2]):
-            draw.text((110, y + i*24), l, fill=COLOR, font=f_sm)
-
-    return img
-
-
-# ===========================================================================
-# FUNCION PRINCIPAL
-# ===========================================================================
-def build_natal_chart_pdf(full_name: str, birth_date: str, birth_time: str, reading: dict) -> tuple:
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    safe_name = "".join(c for c in full_name if c.isalnum() or c == " ").strip().replace(" ", "_")
-    pdf_path  = os.path.join(OUTPUT_DIR, f"{safe_name}_{timestamp}.pdf")
-
-    signo = reading.get("zodiac_western", "aries")
-
-    pages = [
-        _page_portada(signo),
-        _page_carta_astral(reading, full_name, birth_date, birth_time),
-        _page_afinidades(reading),
-        _page_tarot(reading),
-        _page_horoscopo(reading),
-    ]
-
-    # Guardar como PDF multipagina con Pillow
-    pages[0].save(
-        pdf_path,
-        "PDF",
-        resolution=150.0,
-        save_all=True,
-        append_images=pages[1:]
-    )
-
-    cover_used = _pick_portada.__name__   # solo para logging
-    logger.info(f"PDF generado: {pdf_path} ({len(pages)} paginas)")
-    return pdf_path, signo
+    if not pages:
+        raise FileNotFoundError("No hay paginas para PDF")
+    pages[0].save(pdf_path, "PDF", resolution=150.0, save_all=True, append_images=pages[1:])
+    logger.info(f"PDF generado: {pdf_path}")
+    return pdf_path, "1 Escencia solar.jpeg"
