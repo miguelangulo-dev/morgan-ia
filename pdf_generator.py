@@ -36,16 +36,16 @@ SIGN_PREFIX = {
 # CENTRO (x,y) de cada recuadro en proporcion 0-1 + ancho de caja. AJUSTA AQUI.
 COORDS = {
     "carta_astral": {
-        "nombre": (0.22, 0.15), "datos": (1.30, 0.15),
-        "ac": (0.30, 0.60), "dc": (0.70, 0.60),
-        "mc": (0.30, 0.74), "ic": (0.70, 0.74),
-        "planetas": (0.50, 0.90), "box": 0.40,
+        "nombre": (0.33, 0.15), "datos": (0.84, 0.15),
+        "ac": (0.33, 0.63), "dc": (0.70, 0.63),
+        "mc": (0.33, 0.74), "ic": (0.70, 0.74),
+        "planetas": (0.33, 0.30), "box": 0.30,
     },
     "afinidades": {
-        "polaridad": (0.50, 0.20), "amistad": (0.50, 0.34),
-        "fisica": (0.50, 0.48), "intelectual": (0.50, 0.62),
-        "chino": (0.30, 0.80), "celta": (0.70, 0.80),
-        "maya": (0.30, 0.92), "egipcio": (0.70, 0.92), "box": 0.42,
+        "polaridad": (0.33, 0.18), "amistad": (0.70, 0.18),
+        "fisica": (0.33, 0.38), "intelectual": (0.70, 0.38),
+        "chino": (0.33, 0.58), "celta": (0.70, 0.58),
+        "maya": (0.33, 0.78), "egipcio": (0.70, 0.78), "box": 0.42,
     },
     "tarot": {
         "q1": (0.50, 0.28), "q2": (0.50, 0.42), "q3": (0.50, 0.56),
