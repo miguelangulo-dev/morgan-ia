@@ -36,7 +36,7 @@ SIGN_PREFIX = {
 # CENTRO (x,y) de cada recuadro en proporcion 0-1 + ancho de caja. AJUSTA AQUI.
 COORDS = {
     "carta_astral": {
-        "nombre": (0.22, 0.15), "datos": (0.60, 0.15),
+        "nombre": (0.22, 0.15), "datos": (1.30, 0.15),
         "ac": (0.30, 0.60), "dc": (0.70, 0.60),
         "mc": (0.30, 0.74), "ic": (0.70, 0.74),
         "planetas": (0.50, 0.90), "box": 0.40,
