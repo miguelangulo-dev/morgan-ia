@@ -27,7 +27,7 @@ TERMS_URL = "www.sincron-ia.com.mx"
 # ---------- Textos fijos ES/EN ----------
 MSG = {
     "es": {
-        "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgan, guardiana de los velos.",
+        "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgania, guardiana de los velos del destino.",
         "offer": ("Tu Lectura Completa por ${p} MXN\n\nTe entrego:\n- Tu Carta Astral completa\n"
                   "- Afinidades zodiacales\n- Tu signo Celta, Maya, Chino y Egipcio\n"
                   "- Posicion de los planetas el dia que naciste\n- Horoscopo semanal\n"
@@ -59,7 +59,7 @@ MSG = {
                    "En cuanto se confirme, te lo envio aqui mismo."),
         "cont": "Deseas continuar?", "b_paid": "Ya pague / Reenviar",
         "err": "Las runas se nublaron un momento... Intenta de nuevo escribiendo 'hola'.",
-        "delivered": "Aqui esta tu destino completo, {n}. Gracias por confiar en Morgan.",
+        "delivered": "Aqui esta tu destino completo, {n}. Gracias por confiar en Morgania.",
         "restart": "Escribe 'hola' para comenzar.",
     },
     "en": {
