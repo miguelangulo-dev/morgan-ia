@@ -107,6 +107,18 @@ def _detect_lang(text: str) -> str:
                               " amor "," debo "," hola "," nombre "," soy "])
     return "en" if en > es else "es"
 
+def _sign_short(val, maxlen=20):
+    """Extrae solo el nombre del signo (antes del primer punto/salto) y lo recorta.
+    El texto largo completo se conserva en interpretation_json para el PDF."""
+    if not val:
+        return None
+    s = str(val).replace("\r", " ").strip()
+    for sep in [".", "\n", ",", ":", "-", "("]:
+        if sep in s:
+            s = s.split(sep, 1)[0].strip()
+            break
+    return s[:maxlen].strip()
+
 def T(lang, key, **kw):
     s = MSG.get(lang, MSG["es"]).get(key, MSG["es"][key])
     return s.replace("${p}", str(PRICE_MXN)).format(p=PRICE_MXN, **kw) if kw or "{" in s else s
@@ -319,7 +331,7 @@ async def handle_button_reply(db, phone, button_id):
                "genero_m":"genero_m","genero_f":"genero_f","genero_x":"genero_x",
                "acepto_terminos":"acepto_terminos"}
     await handle_incoming_text(db, phone, mapping.get(button_id, button_id))
-    
+
 # Compat: main.py llama handle_button_click en algunas versiones
 async def handle_button_click(db, phone, button_id):
     return await handle_button_reply(db, phone, button_id)
@@ -355,9 +367,11 @@ async def _generate_and_prepare_payment(db, state, phone):
         chart = NatalChart(
             phone_number=phone, full_name=full_name, birth_date=birth_date, birth_time=birth_time,
             birth_place=birth_place, gender=gender,
-            zodiac_western=reading.get("zodiac_western"), zodiac_chinese=reading.get("zodiac_chinese"),
-            zodiac_celtic=reading.get("zodiac_celtic"), zodiac_mayan=reading.get("zodiac_mayan"),
-            zodiac_egyptian=reading.get("zodiac_egyptian"),
+            zodiac_western=_sign_short(reading.get("zodiac_western"), 20),
+            zodiac_chinese=_sign_short(reading.get("zodiac_chinese"), 50),
+            zodiac_celtic=_sign_short(reading.get("zodiac_celtic"), 50),
+            zodiac_mayan=_sign_short(reading.get("zodiac_mayan"), 50),
+            zodiac_egyptian=_sign_short(reading.get("zodiac_egyptian"), 50),
             interpretation_json=reading, cover_used=cover_used, pdf_path=pdf_path,
             pdf_ready=True, payment_status="pending")
         db.add(chart); await db.commit(); await db.refresh(chart)
@@ -368,7 +382,7 @@ async def _generate_and_prepare_payment(db, state, phone):
         await save_state(db, state, step="AWAITING_PAYMENT",
                          data_update={"chart_id": chart.id, "payment_url": payment_url})
         await wa.send_text(phone, T(lang, "sealed",
-                           n=(full_name or "").split()[0], w=reading.get("zodiac_western",""), u=payment_url))
+                           n=(full_name or "").split()[0], w=_sign_short(reading.get("zodiac_western","")) or "", u=payment_url))
         await wa.send_buttons(phone, T(lang, "cont"),
             buttons=[{"id":"reenviar_link","title":T(lang,"b_paid")},
                      {"id":"cancelar_compra","title":T(lang,"b_cancel")}])
