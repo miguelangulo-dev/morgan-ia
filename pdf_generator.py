@@ -15,7 +15,7 @@ FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 OUTPUT_DIR = os.path.join(BASE_DIR, "generated_pdfs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-CANVAS_W, CANVAS_H = 1240, 1754
+CANVAS_W, CANVAS_H = 2550, 3300
 DARK = (35, 25, 10)
 GOLD = (150, 110, 15)
 
