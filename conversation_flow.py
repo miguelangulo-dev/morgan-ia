@@ -315,11 +315,11 @@ async def handle_button_reply(db, phone, button_id):
         if st: await save_state(db, st, data_update={"last_resend_at": now.isoformat()})
         url = d.get("payment_url", "")
         await wa.send_text(phone, url or T(lang, "restart")); return
-        mapping = {"quiero_carta":"si","no_gracias":"no",
+    mapping = {"quiero_carta":"si","no_gracias":"no",
                "genero_m":"genero_m","genero_f":"genero_f","genero_x":"genero_x",
                "acepto_terminos":"acepto_terminos"}
     await handle_incoming_text(db, phone, mapping.get(button_id, button_id))
-
+    
 # Compat: main.py llama handle_button_click en algunas versiones
 async def handle_button_click(db, phone, button_id):
     return await handle_button_reply(db, phone, button_id)
