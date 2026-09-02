@@ -63,7 +63,7 @@ MSG = {
         "restart": "Escribe 'hola' para comenzar.",
     },
     "en": {
-        "intro1": "It is no coincidence you are here... Your destiny is written in the stars.\nI am Morgan, keeper of the veils.",
+        "intro1": "It is no coincidence you are here... Your destiny is written in the stars.\nI am Morgania, keeper of the veils.",
         "offer": ("Your Full Reading for ${p} MXN\n\nYou get:\n- Your complete Natal Chart\n"
                   "- Zodiac affinities\n- Your Celtic, Mayan, Chinese and Egyptian sign\n"
                   "- Planetary positions on your birth day\n- Weekly horoscope\n"
@@ -94,7 +94,7 @@ MSG = {
                    "As soon as it's confirmed, I'll send it right here."),
         "cont": "Continue?", "b_paid": "I paid / Resend",
         "err": "The runes clouded for a moment... Try again by typing 'hi'.",
-        "delivered": "Here is your complete destiny, {n}. Thank you for trusting Morgan.",
+        "delivered": "Here is your complete destiny, {n}. Thank you for trusting Morgania.",
         "restart": "Type 'hi' to start.",
     },
 }
@@ -290,9 +290,32 @@ async def handle_button_reply(db, phone, button_id):
     if button_id == "reenviar_link":
         r = await db.execute(select(ConversationState).where(ConversationState.phone_number == phone))
         st = r.scalar_one_or_none()
-        url = (st.collected_data or {}).get("payment_url","") if st else ""
-        await wa.send_text(phone, url or "..."); return
-    mapping = {"quiero_carta":"si","no_gracias":"no",
+        d = (st.collected_data or {}) if st else {}
+        lang = d.get("lang", "es")
+        # Anti-doble-toque: ignora repeticiones dentro de 15s (evita triple link)
+        now = datetime.utcnow()
+        last = d.get("last_resend_at")
+        if last:
+            try:
+                if (now - datetime.fromisoformat(last)).total_seconds() < 15:
+                    return
+            except Exception:
+                pass
+        # Si el pago ya se confirmo, entrega el PDF en vez de reenviar el link
+        chart_id = d.get("chart_id")
+        if chart_id:
+            cr = await db.execute(select(NatalChart).where(NatalChart.id == chart_id))
+            chart = cr.scalar_one_or_none()
+            if chart and chart.payment_status == "paid":
+                if st: await save_state(db, st, data_update={"last_resend_at": now.isoformat()})
+                if not getattr(chart, "delivered", False):
+                    await deliver_paid_chart(db, chart)
+                return
+        # Aun no pagado: reenvia el link UNA sola vez (sin botones, para no duplicar)
+        if st: await save_state(db, st, data_update={"last_resend_at": now.isoformat()})
+        url = d.get("payment_url", "")
+        await wa.send_text(phone, url or T(lang, "restart")); return
+        mapping = {"quiero_carta":"si","no_gracias":"no",
                "genero_m":"genero_m","genero_f":"genero_f","genero_x":"genero_x",
                "acepto_terminos":"acepto_terminos"}
     await handle_incoming_text(db, phone, mapping.get(button_id, button_id))
