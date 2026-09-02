@@ -48,30 +48,30 @@ Genero: {gender or 'No especificado'}
 
 Devuelve SOLO JSON valido (sin markdown, sin texto extra). Estructura EXACTA:
 {{
-  "zodiac_western": "Signo occidental (una palabra, ej: Aries)",
-  "zodiac_chinese": "Signo chino",
-  "zodiac_celtic": "Signo celta",
-  "zodiac_mayan": "Signo maya",
-  "zodiac_egyptian": "Signo egipcio",
-  "ascendente": "Signo + 1 linea breve",
-  "descendente": "Signo + 1 linea breve",
-  "medio_cielo": "Signo + 1 linea breve",
-  "fondo_cielo": "Signo + 1 linea breve",
+  "zodiac_western": "Signo occidental (una palabra, ej: Aries) + 4 lineas breves de su significado",
+  "zodiac_chinese": "Signo chino + 4 lineas breves de su significado",
+  "zodiac_celtic": "Signo celta + 4 lineas breves de su significado",
+  "zodiac_mayan": "Signo maya + 4 lineas breves de su significado",
+  "zodiac_egyptian": "Signo egipcio + 3 lineas breves de su significado",
+  "ascendente": "Signo + 4 lineas breves",
+  "descendente": "Signo + 4 lineas breves",
+  "medio_cielo": "Signo + 4 lineas breves",
+  "fondo_cielo": "Signo + 4 lineas breves",
   "planetary_positions": {{
     "Sol": "Signo Casa", "Luna": "Signo Casa", "Mercurio": "Signo Casa",
     "Venus": "Signo Casa", "Marte": "Signo Casa", "Jupiter": "Signo Casa",
     "Saturno": "Signo Casa", "Urano": "Signo Casa", "Neptuno": "Signo Casa",
     "Pluton": "Signo Casa"
   }},
-  "afinidad_polaridad": "2 lineas: signos de polaridad afin y opuesta",
-  "afinidad_amistad": "2 lineas: con que signos hace mejor amistad",
-  "afinidad_fisica": "2 lineas: afinidad fisica / atraccion",
-  "afinidad_intelectual": "2 lineas: afinidad intelectual",
+  "afinidad_polaridad": "4 lineas: signos de polaridad afin y opuesta",
+  "afinidad_amistad": "4 lineas: con que signos hace mejor amistad",
+  "afinidad_fisica": "4 lineas: afinidad fisica / atraccion",
+  "afinidad_intelectual": "4 lineas: afinidad intelectual",
   "horoscopo": {{
-    "amor": "2-3 lineas de amor y relaciones para esta semana",
-    "trabajo": "2-3 lineas de trabajo y carrera",
-    "dinero": "2-3 lineas de dinero y finanzas",
-    "salud": "2-3 lineas de salud y bienestar",
+    "amor": "4-5 lineas de amor y relaciones para esta semana",
+    "trabajo": "4-5 lineas de trabajo y carrera",
+    "dinero": "4-5 lineas de dinero y finanzas",
+    "salud": "4-5 lineas de salud y bienestar",
     "dia_suerte": "un dia de la semana",
     "color_suerte": "un color",
     "numero_suerte": "un numero"
@@ -79,8 +79,8 @@ Devuelve SOLO JSON valido (sin markdown, sin texto extra). Estructura EXACTA:
 }}
 
 REGLAS:
-- ascendente/descendente/medio_cielo/fondo_cielo: BREVES (1 linea c/u) para que quepan.
-- afinidades y horoscopo: 2-3 lineas maximo por campo.
+- ascendente/descendente/medio_cielo/fondo_cielo: BREVES (4 lineas c/u) para que quepan.
+- afinidades y horoscopo: 4-5 lineas maximo por campo.
 - Si la hora es Desconocida, calcula el ascendente de forma aproximada y acláralo brevemente.
 - Solo JSON, sin comentarios."""
 
@@ -134,7 +134,7 @@ Devuelve SOLO JSON valido:
       "question": "texto exacto de la pregunta",
       "cards": "1 a 4 cartas con su numero, separadas por ' + ' (ej: La Carroza VII + El Loco 0)",
       "answer": "Si" o "No",
-      "interpretation": "3-4 lineas: que dicen las cartas EN CONJUNTO y por que dan ese Si/No para esta pregunta"
+      "interpretation": "4-5 lineas: que dicen las cartas EN CONJUNTO y por que dan ese Si/No para esta pregunta"
     }}
   ],
   "overall_message": "Cierre mistico de 4-5 lineas que una las respuestas"
