@@ -199,6 +199,12 @@ async def handle_incoming_text(db, phone, text):
     data = state.collected_data or {}
     lang = data.get("lang", "es")
 
+    # Un saludo reinicia el flujo desde CUALQUIER estado (menos mientras se genera),
+    # asi no hay que escribir 'hola' dos veces cuando queda una sesion vieja colgada.
+    if text_clean.lower() in {"hola", "hi", "hello", "buenas", "hey", "menu", "inicio", "start"} \
+       and step != "GENERATING":
+        step = "MENU"
+
     if step == "MENU":
         lang = _detect_lang(text_clean)
         await save_state(db, state, data_update={"lang": lang})
@@ -276,6 +282,12 @@ async def handle_incoming_text(db, phone, text):
             await _generate_and_prepare_payment(db, state, phone)
         else:
             await wa.send_text(phone, T(lang, "terms_need")); await save_state(db, state, step="MENU")
+        return
+
+    if step == "GENERATING":
+        # Ya se esta generando la lectura (2 llamadas a Claude + PDF, 30-60s).
+        # Meta reintenta el webhook si no respondemos rapido: ignoramos los
+        # reintentos para no generar carta ni link por duplicado.
         return
 
     if step == "AWAITING_PAYMENT":
