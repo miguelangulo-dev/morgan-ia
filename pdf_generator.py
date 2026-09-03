@@ -32,29 +32,31 @@ SIGN_PREFIX = {
 }
 
 # CENTRO (x,y) de cada recuadro en proporcion 0-1 + ancho de caja (box). AJUSTA AQUI.
+# NOTA: todas las Y se subieron ~1 cm (-0.018) el 2026-09-03, EXCEPTO
+# carta_astral -> nombre y datos (hoja 1), que se dejaron igual a peticion del cliente.
 COORDS = {
     "carta_astral": {
         "nombre": (0.05, 0.045), "datos": (0.95, 0.045),
-        "planetas": (0.50, 0.535), "box_pl": 0.70,
-        "ac": (0.31, 0.710), "dc": (0.69, 0.710),
-        "mc": (0.31, 0.855), "ic": (0.69, 0.855),
+        "planetas": (0.50, 0.517), "box_pl": 0.70,
+        "ac": (0.31, 0.692), "dc": (0.69, 0.692),
+        "mc": (0.31, 0.837), "ic": (0.69, 0.837),
         "box": 0.30,
     },
     "afinidades": {
-        "polaridad": (0.31, 0.225), "amistad": (0.69, 0.225),
-        "fisica": (0.31, 0.385),   "intelectual": (0.69, 0.385),
-        "chino": (0.31, 0.605),    "celta": (0.69, 0.605),
-        "maya": (0.31, 0.765),     "egipcio": (0.69, 0.765),
+        "polaridad": (0.31, 0.207), "amistad": (0.69, 0.207),
+        "fisica": (0.31, 0.367),   "intelectual": (0.69, 0.367),
+        "chino": (0.31, 0.587),    "celta": (0.69, 0.587),
+        "maya": (0.31, 0.747),     "egipcio": (0.69, 0.747),
         "box": 0.30,
     },
     "tarot": {
-        "q1": (0.50, 0.215), "q2": (0.50, 0.385), "q3": (0.50, 0.525),
-        "q4": (0.50, 0.675), "q5": (0.50, 0.820), "box": 0.72,
+        "q1": (0.50, 0.197), "q2": (0.50, 0.367), "q3": (0.50, 0.507),
+        "q4": (0.50, 0.657), "q5": (0.50, 0.802), "box": 0.72,
     },
     "horoscopo": {
-        "amor": (0.50, 0.245), "trabajo": (0.50, 0.410),
-        "dinero": (0.50, 0.570), "salud": (0.50, 0.730),
-        "dia": (0.44, 0.822), "color": (0.46, 0.847), "numero": (0.49, 0.872),
+        "amor": (0.50, 0.227), "trabajo": (0.50, 0.392),
+        "dinero": (0.50, 0.552), "salud": (0.50, 0.712),
+        "dia": (0.44, 0.804), "color": (0.46, 0.829), "numero": (0.49, 0.854),
         "box": 0.68,
     },
 }
@@ -73,7 +75,15 @@ def _strip(s):
                    if not unicodedata.combining(c)).lower().strip()
 
 def pick_cover(sign: str):
-    prefix = SIGN_PREFIX.get(_strip(sign).split()[0] if sign else "", None)
+    # Toma solo la primera palabra del signo, sin puntuacion.
+    # (El texto ahora llega como "Escorpio. Intenso..." y antes rompia el match)
+    first = ""
+    if sign:
+        cleaned = _strip(sign)
+        cleaned = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in cleaned)
+        parts = cleaned.split()
+        first = parts[0] if parts else ""
+    prefix = SIGN_PREFIX.get(first, None)
     if prefix and os.path.isdir(COVERS_DIR):
         matches = [f for f in os.listdir(COVERS_DIR)
                    if _strip(f).startswith(prefix) and f.lower().endswith((".jpeg", ".jpg", ".png"))]
@@ -148,24 +158,24 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
                fill=DARK, font=f_small, anchor="ra")
         planets_txt = "   ".join(f"{k}: {v}" for k, v in planets.items())
         _centered(d, planets_txt, *c["planetas"], W, H, f_small, c["box_pl"], 6, GAP_S, GOLD)
-        _centered(d, reading.get("ascendente", ""),  *c["ac"], W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("descendente", ""), *c["dc"], W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("medio_cielo", ""), *c["mc"], W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("fondo_cielo", ""),  *c["ic"], W, H, f_small, c["box"], 5, GAP_S)
+        _centered(d, reading.get("ascendente", ""),  *c["ac"], W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("descendente", ""), *c["dc"], W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("medio_cielo", ""), *c["mc"], W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("fondo_cielo", ""),  *c["ic"], W, H, f_small, c["box"], 6, GAP_S)
         pages.append(img)
 
     # --- PAGINA 3: AFINIDADES + SIGNOS (2 columnas) ---
     img = _open_tpl(TPL_AFIN)
     if img:
         d = ImageDraw.Draw(img); W, H = img.size; c = COORDS["afinidades"]
-        _centered(d, reading.get("afinidad_polaridad", ""),   *c["polaridad"],   W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("afinidad_amistad", ""),     *c["amistad"],     W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("afinidad_fisica", ""),      *c["fisica"],      W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("afinidad_intelectual", ""), *c["intelectual"], W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("zodiac_chinese", ""),  *c["chino"],   W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("zodiac_celtic", ""),   *c["celta"],   W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("zodiac_mayan", ""),    *c["maya"],    W, H, f_small, c["box"], 5, GAP_S)
-        _centered(d, reading.get("zodiac_egyptian", ""), *c["egipcio"], W, H, f_small, c["box"], 5, GAP_S)
+        _centered(d, reading.get("afinidad_polaridad", ""),   *c["polaridad"],   W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("afinidad_amistad", ""),     *c["amistad"],     W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("afinidad_fisica", ""),      *c["fisica"],      W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("afinidad_intelectual", ""), *c["intelectual"], W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("zodiac_chinese", ""),  *c["chino"],   W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("zodiac_celtic", ""),   *c["celta"],   W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("zodiac_mayan", ""),    *c["maya"],    W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, reading.get("zodiac_egyptian", ""), *c["egipcio"], W, H, f_small, c["box"], 6, GAP_S)
         pages.append(img)
 
     # --- PAGINA 4: TAROT ---
@@ -184,10 +194,10 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
     img = _open_tpl(TPL_HORO)
     if img:
         d = ImageDraw.Draw(img); W, H = img.size; c = COORDS["horoscopo"]
-        _centered(d, horo.get("amor", ""),    *c["amor"],    W, H, f_small, c["box"], 4, GAP_S)
-        _centered(d, horo.get("trabajo", ""), *c["trabajo"], W, H, f_small, c["box"], 4, GAP_S)
-        _centered(d, horo.get("dinero", ""),  *c["dinero"],  W, H, f_small, c["box"], 4, GAP_S)
-        _centered(d, horo.get("salud", ""),   *c["salud"],   W, H, f_small, c["box"], 4, GAP_S)
+        _centered(d, horo.get("amor", ""),    *c["amor"],    W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, horo.get("trabajo", ""), *c["trabajo"], W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, horo.get("dinero", ""),  *c["dinero"],  W, H, f_small, c["box"], 6, GAP_S)
+        _centered(d, horo.get("salud", ""),   *c["salud"],   W, H, f_small, c["box"], 6, GAP_S)
         d.text((int(W*c["dia"][0]),    int(H*c["dia"][1])),    str(horo.get("dia_suerte", "")),    fill=DARK, font=f_reg, anchor="lm")
         d.text((int(W*c["color"][0]),  int(H*c["color"][1])),  str(horo.get("color_suerte", "")),  fill=DARK, font=f_reg, anchor="lm")
         d.text((int(W*c["numero"][0]), int(H*c["numero"][1])), str(horo.get("numero_suerte", "")), fill=DARK, font=f_reg, anchor="lm")
