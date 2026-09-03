@@ -48,15 +48,15 @@ Genero: {gender or 'No especificado'}
 
 Devuelve SOLO JSON valido (sin markdown, sin texto extra). Estructura EXACTA:
 {{
-  "zodiac_western": "Signo occidental (una palabra, ej: Aries) + 5-6 lineas breves de su significado",
-  "zodiac_chinese": "Signo chino + 5-6 lineas breves de su significado",
-  "zodiac_celtic": "Signo celta + 5-6 lineas breves de su significado",
-  "zodiac_mayan": "Signo maya + 5-6 lineas breves de su significado",
-  "zodiac_egyptian": "Signo egipcio + 5-6 lineas breves de su significado",
-  "ascendente": "Signo + 5-6 lineas breves",
-  "descendente": "Signo + 5-6 lineas breves",
-  "medio_cielo": "Signo + 5-6 lineas breves",
-  "fondo_cielo": "Signo + 5-6 lineas breves",
+ "zodiac_western": "Signo occidental (una palabra, ej: Aries) + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_chinese": "Signo chino + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_celtic": "Signo celta + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_mayan": "Signo maya + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_egyptian": "Signo egipcio + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "ascendente": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "descendente": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "medio_cielo": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "fondo_cielo": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
   "planetary_positions": {{
     "Sol": "Signo Casa", "Luna": "Signo Casa", "Mercurio": "Signo Casa",
     "Venus": "Signo Casa", "Marte": "Signo Casa", "Jupiter": "Signo Casa",
@@ -78,13 +78,14 @@ Devuelve SOLO JSON valido (sin markdown, sin texto extra). Estructura EXACTA:
   }}
 }}
 
-REGLAS:
-- Cada campo de texto: MAXIMO 6 lineas cortas (unos 90 caracteres por linea).
-- SE CONCRETO: cada texto debe ser autocontenido y TERMINAR la ultima frase con punto.
-  NUNCA cortes una idea a la mitad ni dejes frases inconclusas; si te acercas al limite,
-  cierra la idea antes. Prefiere frases completas y claras sobre relleno.
-- ascendente/descendente/medio_cielo/fondo_cielo y afinidades/horoscopo: misma regla (max 6 lineas, idea cerrada).
-- Si la hora es Desconocida, calcula el ascendente de forma aproximada y acláralo brevemente.
+REGLAS (CRITICO - respeta el limite de caracteres de cada campo):
+- CAMPO ESTRECHO (signos zodiac_*, ascendente/descendente/medio_cielo/fondo_cielo
+  y todas las afinidades): MAXIMO 190 caracteres reales contando espacios. Es poco
+  espacio: escribe 2-3 frases cortas y COMPLETAS. NO lo excedas.
+- Los campos de horoscopo (amor/trabajo/dinero/salud): hasta 450 caracteres.
+- REGLA DE ORO: cada texto debe CERRAR con punto final y NUNCA quedar a media frase.
+  Antes de terminar cuenta los caracteres; si te acercas al limite, cierra la idea ya.
+- Si la hora es Desconocida, calcula el ascendente aproximado y acláralo en pocas palabras.
 - Solo JSON, sin comentarios."""
 
     async def _run_chart(self, birth_date, birth_time=None, birth_place=None, gender=None, lang="es"):
