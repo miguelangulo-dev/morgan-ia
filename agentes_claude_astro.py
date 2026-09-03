@@ -79,8 +79,11 @@ Devuelve SOLO JSON valido (sin markdown, sin texto extra). Estructura EXACTA:
 }}
 
 REGLAS:
-- ascendente/descendente/medio_cielo/fondo_cielo: BREVES (5-6 lineas c/u) para que quepan.
-- afinidades y horoscopo: 5-6 lineas maximo por campo.
+- Cada campo de texto: MAXIMO 6 lineas cortas (unos 90 caracteres por linea).
+- SE CONCRETO: cada texto debe ser autocontenido y TERMINAR la ultima frase con punto.
+  NUNCA cortes una idea a la mitad ni dejes frases inconclusas; si te acercas al limite,
+  cierra la idea antes. Prefiere frases completas y claras sobre relleno.
+- ascendente/descendente/medio_cielo/fondo_cielo y afinidades/horoscopo: misma regla (max 6 lineas, idea cerrada).
 - Si la hora es Desconocida, calcula el ascendente de forma aproximada y acláralo brevemente.
 - Solo JSON, sin comentarios."""
 
@@ -143,6 +146,8 @@ Devuelve SOLO JSON valido:
 REGLAS:
 - Exactamente {len(questions)} objetos en "readings", en orden.
 - Cada respuesta un Si o No claro; cada tirada con cartas DIFERENTES.
+- interpretation y overall_message: MAXIMO 6 lineas cortas, SE CONCRETO y CIERRA la
+  ultima frase con punto. Nunca dejes una idea a la mitad ni frases inconclusas.
 - Solo JSON."""
         try:
             resp = self.client.messages.create(
