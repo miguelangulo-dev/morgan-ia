@@ -109,7 +109,13 @@ def _wrap(d, text, font, max_w):
     return lines
 
 def _centered(d, text, cx_rel, cy_rel, W, H, font, box_rel, max_lines=6, gap=48, color=DARK):
-    lines = _wrap(d, text, font, int(W * box_rel))[:max_lines]
+    all_lines = _wrap(d, text, font, int(W * box_rel))
+    if len(all_lines) > max_lines:
+        kept = " ".join(all_lines[:max_lines]).rstrip()
+        cut = kept.rfind(".")
+        kept = kept[:cut + 1] if cut >= 40 else kept.rstrip(" ,;:") + "."
+        all_lines = _wrap(d, kept, font, int(W * box_rel))[:max_lines]
+    lines = all_lines  
     if not lines:
         return
     cx, cy = int(W * cx_rel), int(H * cy_rel)
