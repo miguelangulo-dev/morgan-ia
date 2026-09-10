@@ -20,7 +20,7 @@ from payment import create_payment_link
 logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
 astro = AstroAgent()
-PRICE_MXN = 49
+PRICE_MXN = 99
 ADMIN_KEY = os.getenv("MORGAN_ADMIN_KEY", "634r50fw4R!977$5283266")
 TERMS_URL = "www.sincron-ia.com.mx"
 
