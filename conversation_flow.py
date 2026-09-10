@@ -41,18 +41,18 @@ MSG = {
         "bad_date": "No pude leer esa fecha. Usa DD/MM/AAAA, ej: 15/03/1990",
         "ask_time": "Y a que hora naciste? (Ej: 14:30)\nSi no la sabes, escribe 'no se'.",
         "bad_time": "No pude leer esa hora. Usa HH:MM (24h), ej: 14:30, o escribe 'no se'.",
-        "ask_place": "En que ciudad naciste? (Ej: Celaya, Mexico)\nSi no lo sabes, escribe 'no se'.",
+        "ask_place": "En que ciudad naciste? (Ej: CDMX, Mexico)\nSi no lo sabes, escribe 'no se'.",
         "ask_gender": "Como te identificas?",
         "g_m": "Masculino", "g_f": "Femenino", "g_x": "Prefiero no decir",
-        "ask_q1": ("Ahora la parte sagrada. Puedes hacerme 5 preguntas al destino; te respondo Si/No "
+        "ask_q1": ("Ahora la parte sagrada. Puedes hacer 5 preguntas al destino; te respondo Si/No "
                    "con la carta que salio y su simbologia.\n\nPregunta 1 de 5:"),
-        "next_q": "Anotada.\n\nPregunta {i} de 5:",
+        "next_q": "Anotada en las runas.\n\nPregunta {i} de 5:",
         "short_q": "Formulala un poco mas completa. Pregunta {i}?",
         "terms_body": f"He leido y acepto los terminos y condiciones de {TERMS_URL}",
         "b_accept": "He leido y acepto", "b_cancel": "Cancelar",
         "terms_need": "Necesito que aceptes los terminos para continuar. Escribe 'hola' para reiniciar.",
-        "generating": ("Gracias. Sello tus 5 preguntas en el circulo de proteccion.\n"
-                       "Generando tu lectura completa... dame un momento."),
+        "generating": ("Gracias. Sello y guardo tus 5 preguntas en el circulo de proteccion.\n"
+                       "Generando tu lectura completa... dame un momento, esto lleva un poco de magia."),
         "sealed": ("Tu destino esta sellado, {n}.\n\nEres {w} en occidente.\n"
                    "Tus 5 respuestas de tarot ya estan en el PDF.\n\n"
                    "Para recibir tu PDF completo, paga ${p} MXN aqui:\n{u}\n\n"
@@ -63,7 +63,7 @@ MSG = {
         "restart": "Escribe 'hola' para comenzar.",
     },
     "en": {
-        "intro1": "It is no coincidence you are here... Your destiny is written in the stars.\nI am Morgania, keeper of the veils.",
+        "intro1": "It is no coincidence you are here... Your destiny is written in the stars.\nI am Morgania, keeper of the veils of destiny.",
         "offer": ("Your Full Reading for ${p} MXN\n\nYou get:\n- Your complete Natal Chart\n"
                   "- Zodiac affinities\n- Your Celtic, Mayan, Chinese and Egyptian sign\n"
                   "- Planetary positions on your birth day\n- Weekly horoscope\n"
@@ -77,17 +77,17 @@ MSG = {
         "bad_date": "I couldn't read that date. Use DD/MM/YYYY, e.g. 15/03/1990",
         "ask_time": "And what time were you born? (e.g. 14:30)\nIf you don't know, type 'idk'.",
         "bad_time": "I couldn't read that time. Use HH:MM (24h), e.g. 14:30, or type 'idk'.",
-        "ask_place": "In which city were you born? (e.g. Celaya, Mexico)\nIf unknown, type 'idk'.",
+        "ask_place": "In which city were you born? (e.g. Washington, DC)\nIf unknown, type 'idk'.",
         "ask_gender": "How do you identify?",
         "g_m": "Male", "g_f": "Female", "g_x": "Prefer not to say",
         "ask_q1": ("Now the sacred part. You may ask 5 questions to destiny; I answer Yes/No "
                    "with the card drawn and its symbolism.\n\nQuestion 1 of 5:"),
-        "next_q": "Noted.\n\nQuestion {i} of 5:",
+        "next_q": "Noted in runes.\n\nQuestion {i} of 5:",
         "short_q": "Make it a bit more complete. Question {i}?",
         "terms_body": f"I have read and accept the terms and conditions of {TERMS_URL}",
         "b_accept": "I read and accept", "b_cancel": "Cancel",
         "terms_need": "I need you to accept the terms to continue. Type 'hi' to restart.",
-        "generating": "Thank you. Sealing your 5 questions.\nGenerating your full reading... one moment.",
+        "generating": "Thank you. Sealing and storing your 5 questions.\nGenerating your full reading... one moment, this takes a little bit of magic.",
         "sealed": ("Your destiny is sealed, {n}.\n\nYou are {w} in the western zodiac.\n"
                    "Your 5 tarot answers are in the PDF.\n\n"
                    "To receive your full PDF, pay ${p} MXN here:\n{u}\n\n"
