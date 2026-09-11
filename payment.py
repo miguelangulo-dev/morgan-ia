@@ -100,7 +100,7 @@ async def create_payment_link(amount_mxn: int, reference_id: str, description: s
         logger.error(f"Error creando session fallback: {e2}")
         raise
 
-async def regenerate_payment_link_for_chart(chart_id: int, full_name: str, amount_mxn: int = 99) -> str:
+async def regenerate_payment_link_for_chart(chart_id: int, full_name: str, amount_mxn: int = 49) -> str:
     """Para boton Ya pague / Reenviar - genera link nuevo que no expira"""
     return await create_payment_link(amount_mxn, str(chart_id), f"Carta Astral Completa - {full_name} - Reenvio")
 
