@@ -1,414 +1,757 @@
 """
-conversation_flow.py - Reescrito
-- Restaura pregunta de LUGAR de nacimiento y agrega GENERO (para reporte)
-- Paso obligatorio de TERMINOS antes del pago
-- Idioma ES/EN (textos fijos) + contenido de Claude en idioma del usuario
-- Clave maestra de admin -> reporte de ventas por WhatsApp
-- Tarot en llamada separada (no trunca el JSON)
+conversation_flow.py - Flujo de conversacion Morgan-ia
+
+PASOS DEL FLUJO (en orden):
+  MENU
+  -> AWAITING_CONSENT        (BUG1 - LFPDPPP: aviso de privacidad PRIMERO)
+  -> AWAITING_SERVICE_CONFIRM
+  -> AWAITING_FULL_NAME
+  -> AWAITING_BIRTH_DATE
+  -> AWAITING_BIRTH_TIME
+  -> AWAITING_BIRTH_PLACE
+  -> AWAITING_GENDER
+  -> AWAITING_Q1 -> Q2 -> Q3 -> Q4 -> Q5
+  -> AWAITING_INVOICE_MX     (BUG2 - solo para lada +52)
+  -> AWAITING_RFC            (BUG2 - opcional, si el usuario dice si a factura)
+  -> GENERATING
+  -> AWAITING_PAYMENT
+  -> COMPLETED
+
+CAMBIOS v3.0:
+- BUG1: consentimiento LFPDPPP con tabla auditoria_consentimientos
+- BUG2: deteccion lada +52 / extranjero, flujo de facturacion diferenciado
+- BUG6: branding "Un producto de Sincronia Tech Developers S.A.S."
+- BUG7: guard para pdf_path None, logging mejorado
 """
-import os, re, logging
+
+import logging
+import re
 from datetime import datetime
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import ConversationState, NatalChart
+from models import ConversationState, NatalChart, AuditoriaConsentimiento
 from utils_whatsapp import WhatsAppClient
 from agentes_claude_astro import AstroAgent
 from pdf_generator import build_natal_chart_pdf
 from payment import create_payment_link
 
 logger = logging.getLogger(__name__)
+
 wa = WhatsAppClient()
 astro = AstroAgent()
+
 PRICE_MXN = 49
-ADMIN_KEY = os.getenv("MORGAN_ADMIN_KEY", "634r50fw4R!977$5283266")
-TERMS_URL = "www.sincron-ia.com.mx"
+BRANDING = "Un producto de Sincronia Tech Developers S.A.S. - www.sincron-ia.com.mx"
+AVISO_VERSION = "v1.3"
+AVISO_URL = "www.sincron-ia.com.mx/aviso"
 
-# ---------- Textos fijos ES/EN ----------
-MSG = {
-    "es": {
-        "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgania, guardiana de los velos del destino.",
-        "offer": ("Tu Lectura Completa por ${p} MXN\n\nTe entrego:\n- Tu Carta Astral completa\n"
-                  "- Afinidades zodiacales\n- Tu signo Celta, Maya, Chino y Egipcio\n"
-                  "- Posicion de los planetas el dia que naciste\n- Horoscopo semanal\n"
-                  "- 5 preguntas al destino con tirada de tarot (Si/No + carta)\n\n"
-                  "Pagas ${p} MXN solo cuando todo este listo.\n\nAceptas abrir tu destino?"),
-        "b_yes": "Si, abrir mi destino", "b_no": "No por ahora", "choose": "Elige tu camino:",
-        "later": "Entiendo... las estrellas esperaran. Escribe 'hola' cuando estes list@.",
-        "ask_name": "Para comenzar, dime tu nombre completo.",
-        "short_name": "Ese nombre parece muy corto. Me compartes tu nombre completo?",
-        "ask_date": "Gracias, {n}\n\nCual es tu fecha de nacimiento? (Ej: 15/03/1990)",
-        "bad_date": "No pude leer esa fecha. Usa DD/MM/AAAA, ej: 15/03/1990",
-        "ask_time": "Y a que hora naciste? (Ej: 14:30)\nSi no la sabes, escribe 'no se'.",
-        "bad_time": "No pude leer esa hora. Usa HH:MM (24h), ej: 14:30, o escribe 'no se'.",
-        "ask_place": "En que ciudad naciste? (Ej: CDMX, Mexico)\nSi no lo sabes, escribe 'no se'.",
-        "ask_gender": "Como te identificas?",
-        "g_m": "Masculino", "g_f": "Femenino", "g_x": "Prefiero no decir",
-        "ask_q1": ("Ahora la parte sagrada. Puedes hacer 5 preguntas al destino; te respondo Si/No "
-                   "con la carta que salio y su simbologia.\n\nPregunta 1 de 5:"),
-        "next_q": "Anotada en las runas.\n\nPregunta {i} de 5:",
-        "short_q": "Formulala un poco mas completa. Pregunta {i}?",
-        "terms_body": f"He leido y acepto los terminos y condiciones de {TERMS_URL}",
-        "b_accept": "He leido y acepto", "b_cancel": "Cancelar",
-        "terms_need": "Necesito que aceptes los terminos para continuar. Escribe 'hola' para reiniciar.",
-        "generating": ("Gracias. Sello y guardo tus 5 preguntas en el circulo de proteccion.\n"
-                       "Generando tu lectura completa... dame un momento, esto lleva un poco de magia."),
-        "sealed": ("Tu destino esta sellado, {n}.\n\nEres {w} en occidente.\n"
-                   "Tus 5 respuestas de tarot ya estan en el PDF.\n\n"
-                   "Para recibir tu PDF completo, paga ${p} MXN aqui:\n{u}\n\n"
-                   "En cuanto se confirme, te lo envio aqui mismo."),
-        "cont": "Deseas continuar?", "b_paid": "Ya pague / Reenviar",
-        "err": "Las runas se nublaron un momento... Intenta de nuevo escribiendo 'hola'.",
-        "delivered": "Aqui esta tu destino completo, {n}. Gracias por confiar en Morgania.",
-        "restart": "Escribe 'hola' para comenzar.",
-    },
-    "en": {
-        "intro1": "It is no coincidence you are here... Your destiny is written in the stars.\nI am Morgania, keeper of the veils of destiny.",
-        "offer": ("Your Full Reading for ${p} MXN\n\nYou get:\n- Your complete Natal Chart\n"
-                  "- Zodiac affinities\n- Your Celtic, Mayan, Chinese and Egyptian sign\n"
-                  "- Planetary positions on your birth day\n- Weekly horoscope\n"
-                  "- 5 questions to destiny with a tarot spread (Yes/No + card)\n\n"
-                  "You pay ${p} MXN only when everything is ready.\n\nDo you accept to open your destiny?"),
-        "b_yes": "Yes, open it", "b_no": "Not now", "choose": "Choose your path:",
-        "later": "I understand... the stars will wait. Type 'hi' when you are ready.",
-        "ask_name": "To begin, tell me your full name.",
-        "short_name": "That name seems too short. Can you share your full name?",
-        "ask_date": "Thank you, {n}\n\nWhat is your date of birth? (e.g. 15/03/1990)",
-        "bad_date": "I couldn't read that date. Use DD/MM/YYYY, e.g. 15/03/1990",
-        "ask_time": "And what time were you born? (e.g. 14:30)\nIf you don't know, type 'idk'.",
-        "bad_time": "I couldn't read that time. Use HH:MM (24h), e.g. 14:30, or type 'idk'.",
-        "ask_place": "In which city were you born? (e.g. Washington, DC)\nIf unknown, type 'idk'.",
-        "ask_gender": "How do you identify?",
-        "g_m": "Male", "g_f": "Female", "g_x": "Prefer not to say",
-        "ask_q1": ("Now the sacred part. You may ask 5 questions to destiny; I answer Yes/No "
-                   "with the card drawn and its symbolism.\n\nQuestion 1 of 5:"),
-        "next_q": "Noted in runes.\n\nQuestion {i} of 5:",
-        "short_q": "Make it a bit more complete. Question {i}?",
-        "terms_body": f"I have read and accept the terms and conditions of {TERMS_URL}",
-        "b_accept": "I read and accept", "b_cancel": "Cancel",
-        "terms_need": "I need you to accept the terms to continue. Type 'hi' to restart.",
-        "generating": "Thank you. Sealing and storing your 5 questions.\nGenerating your full reading... one moment, this takes a little bit of magic.",
-        "sealed": ("Your destiny is sealed, {n}.\n\nYou are {w} in the western zodiac.\n"
-                   "Your 5 tarot answers are in the PDF.\n\n"
-                   "To receive your full PDF, pay ${p} MXN here:\n{u}\n\n"
-                   "As soon as it's confirmed, I'll send it right here."),
-        "cont": "Continue?", "b_paid": "I paid / Resend",
-        "err": "The runes clouded for a moment... Try again by typing 'hi'.",
-        "delivered": "Here is your complete destiny, {n}. Thank you for trusting Morgania.",
-        "restart": "Type 'hi' to start.",
-    },
-}
+# Texto completo del aviso (se guarda en auditoria)
+TEXTO_AVISO = (
+    "Hola, soy Morgan-IA. Tus datos (nombre, fecha de nacimiento, lugar) se usan "
+    "unicamente para generar tu carta astral. No se comparten con terceros. "
+    f"Consulta el Aviso de Privacidad completo en {AVISO_URL} ({AVISO_VERSION})."
+)
 
-def _detect_lang(text: str) -> str:
-    t = f" {(text or '').lower()} "
-    en = sum(w in t for w in [" the "," what "," when "," yes "," no "," my "," born ",
-                              " love "," will "," should "," hi "," hello "," name "])
-    es = sum(w in t for w in [" el "," la "," que "," cuando "," si "," no "," mi "," naci ",
-                              " amor "," debo "," hola "," nombre "," soy "])
-    return "en" if en > es else "es"
 
-def _sign_short(val, maxlen=20):
-    """Extrae solo el nombre del signo (antes del primer punto/salto) y lo recorta.
-    El texto largo completo se conserva en interpretation_json para el PDF."""
-    if not val:
-        return None
-    s = str(val).replace("\r", " ").strip()
-    for sep in [".", "\n", ",", ":", "-", "("]:
-        if sep in s:
-            s = s.split(sep, 1)[0].strip()
-            break
-    return s[:maxlen].strip()
+# ============================================================================
+# Helpers de estado
+# ============================================================================
 
-def T(lang, key, **kw):
-    s = MSG.get(lang, MSG["es"]).get(key, MSG["es"][key])
-    return s.replace("${p}", str(PRICE_MXN)).format(p=PRICE_MXN, **kw) if kw or "{" in s else s
+async def get_or_create_state(db: AsyncSession, phone: str) -> ConversationState:
+    result = await db.execute(
+        select(ConversationState).where(ConversationState.phone_number == phone)
+    )
+    state = result.scalar_one_or_none()
+    if not state:
+        state = ConversationState(
+            phone_number=phone, current_step="MENU", collected_data={}
+        )
+        db.add(state)
+        await db.commit()
+        await db.refresh(state)
+    return state
 
-# ---------- Helpers de parseo ----------
-def _is_affirmative(t):
-    return t.strip().lower() in ["si","sí","s","yes","y","ok","dale","claro","va","quiero","acepto","hi","hola"]
 
-def _is_unknown(t):
-    return t.strip().lower() in ["no se","no sé","nose","ns","idk","dont know","don't know","no lo se","-"]
-
-def _parse_date(t):
-    m = re.search(r"(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})", t)
-    if not m: return None
-    d, mth, y = m.groups()
-    y = ("19"+y if int(y) > 30 else "20"+y) if len(y) == 2 else y
-    try:
-        datetime(int(y), int(mth), int(d)); return f"{int(d):02d}/{int(mth):02d}/{y}"
-    except ValueError:
-        return None
-
-def _parse_time(t):
-    m = re.search(r"(\d{1,2}):(\d{2})", t)
-    if not m: return None
-    h, mi = int(m.group(1)), int(m.group(2))
-    return f"{h:02d}:{mi:02d}" if 0 <= h < 24 and 0 <= mi < 60 else None
-
-# ---------- State ----------
-async def get_or_create_state(db, phone):
-    r = await db.execute(select(ConversationState).where(ConversationState.phone_number == phone))
-    st = r.scalar_one_or_none()
-    if not st:
-        st = ConversationState(phone_number=phone, current_step="MENU", collected_data={})
-        db.add(st); await db.commit(); await db.refresh(st)
-    return st
-
-async def save_state(db, state, step=None, data_update=None):
-    if step: state.current_step = step
+async def save_state(
+    db: AsyncSession,
+    state: ConversationState,
+    step: str = None,
+    data_update: dict = None,
+):
+    if step:
+        state.current_step = step
     if data_update:
-        merged = dict(state.collected_data or {}); merged.update(data_update)
+        merged = dict(state.collected_data or {})
+        merged.update(data_update)
         state.collected_data = merged
     state.updated_at = datetime.utcnow()
     await db.commit()
 
-# ---------- Reporte admin ----------
-async def _build_admin_report(db) -> str:
-    total = (await db.execute(select(func.count()).select_from(NatalChart)
-             .where(NatalChart.payment_status == "paid"))).scalar() or 0
-    gen = (await db.execute(select(NatalChart.gender, func.count())
-           .where(NatalChart.payment_status == "paid").group_by(NatalChart.gender))).all()
-    sig = (await db.execute(select(NatalChart.zodiac_western, func.count())
-           .where(NatalChart.payment_status == "paid").group_by(NatalChart.zodiac_western))).all()
-    today = datetime.utcnow().date()
-    hoy = (await db.execute(select(func.count()).select_from(NatalChart)
-           .where(NatalChart.payment_status == "paid",
-                  NatalChart.created_at >= datetime.combine(today, datetime.min.time())))).scalar() or 0
-    pct = lambda n: f"{(n*100//total) if total else 0}%"
-    out = [f"REPORTE MORGAN-IA", f"Ventas totales: {total}  (${total*PRICE_MXN} MXN)", f"Ventas hoy: {hoy}", "", "Por genero:"]
-    out += [f"  {g or 'N/D'}: {c} ({pct(c)})" for g, c in gen] or ["  (sin datos)"]
-    out += ["", "Por signo:"]
-    out += [f"  {s or 'N/D'}: {c} ({pct(c)})" for s, c in sorted(sig, key=lambda x: -x[1])] or ["  (sin datos)"]
-    return "\n".join(out)
 
-# ---------- Flujo principal ----------
-async def handle_incoming_text(db, phone, text):
-    text_clean = (text or "").strip()
+# ============================================================================
+# BUG2: Deteccion de lada
+# ============================================================================
 
-    # Clave maestra (admin) - antes de todo
-    if text_clean == ADMIN_KEY:
-        try:
-            rep = await _build_admin_report(db)
-        except Exception as e:
-            logger.error(f"Error reporte admin: {e}", exc_info=True); rep = "No pude generar el reporte."
-        await wa.send_text(phone, rep); return
+def _es_mexico(phone: str) -> bool:
+    """
+    True si el numero tiene lada mexicana (+52).
+    WhatsApp entrega el numero sin '+', p.ej.: 521234567890 o 5212345678
+    """
+    clean = re.sub(r"\D", "", phone)
+    return clean.startswith("52")
 
+
+# ============================================================================
+# Auditoria LFPDPPP
+# ============================================================================
+
+async def _registrar_consentimiento(
+    db: AsyncSession,
+    phone: str,
+    acepto: bool,
+    texto: str,
+):
+    """Guarda registro en auditoria_consentimientos."""
+    pais = "MX" if _es_mexico(phone) else "EXT"
+    registro = AuditoriaConsentimiento(
+        whatsapp_id=phone,
+        pais_detectado=pais,
+        fecha_hora_utc=datetime.utcnow(),
+        version_aviso=AVISO_VERSION,
+        texto_aceptado=texto,
+        acepto=acepto,
+    )
+    db.add(registro)
+    await db.commit()
+    logger.info(f"[Auditoria] Consentimiento {'ACEPTADO' if acepto else 'RECHAZADO'} - {phone} ({pais})")
+
+
+# ============================================================================
+# Punto de entrada: texto libre
+# ============================================================================
+
+async def handle_incoming_text(db: AsyncSession, phone: str, text: str):
+    """Recibe cualquier texto y lo enruta segun el paso actual."""
     state = await get_or_create_state(db, phone)
     step = state.current_step
-    data = state.collected_data or {}
-    lang = data.get("lang", "es")
+    text_clean = text.strip()
 
-    # Un saludo reinicia el flujo desde CUALQUIER estado (menos mientras se genera),
-    # asi no hay que escribir 'hola' dos veces cuando queda una sesion vieja colgada.
-    if text_clean.lower() in {"hola", "hi", "hello", "buenas", "hey", "menu", "inicio", "start"} \
-       and step != "GENERATING":
-        step = "MENU"
-
+    # ------------------------------------------------------------------
+    # MENU: primer contacto -> mostrar aviso de privacidad (BUG1)
+    # ------------------------------------------------------------------
     if step == "MENU":
-        lang = _detect_lang(text_clean)
-        await save_state(db, state, data_update={"lang": lang})
-        await wa.send_text(phone, T(lang, "intro1"))
-        await wa.send_text(phone, T(lang, "offer"))
-        await wa.send_buttons(phone, T(lang, "choose"),
-            buttons=[{"id":"quiero_carta","title":T(lang,"b_yes")},{"id":"no_gracias","title":T(lang,"b_no")}])
-        await save_state(db, state, step="AWAITING_SERVICE_CONFIRM"); return
+        await wa.send_text(
+            phone,
+            f"Hola, soy Morgan-IA *{chr(10)}Un producto de Sincronia Tech Developers S.A.S.*\n\n"
+            f"{TEXTO_AVISO}\n\n"
+            "Para continuar necesito tu consentimiento.\n"
+            f"Consulta el aviso completo en {AVISO_URL}",
+        )
+        await wa.send_buttons(
+            phone,
+            "Selecciona una opcion:",
+            buttons=[
+                {"id": "consent_si", "title": "Si, acepto Aviso"},
+                {"id": "consent_no", "title": "No acepto"},
+            ],
+        )
+        await save_state(db, state, step="AWAITING_CONSENT")
+        return
 
+    # ------------------------------------------------------------------
+    # AWAITING_CONSENT: procesar respuesta al aviso (BUG1)
+    # ------------------------------------------------------------------
+    if step == "AWAITING_CONSENT":
+        if _is_affirmative(text_clean):
+            await _registrar_consentimiento(db, phone, acepto=True, texto="Si, acepto")
+            await _preguntar_servicio(phone)
+            await save_state(db, state, step="AWAITING_SERVICE_CONFIRM")
+        else:
+            await _registrar_consentimiento(db, phone, acepto=False, texto=text_clean)
+            await wa.send_text(
+                phone,
+                "Sin problema. No podemos procesar tu lectura sin tu consentimiento.\n"
+                "Si cambias de opinion, escribe 'hola' cuando quieras.\n\n"
+                f"_{BRANDING}_",
+            )
+            await save_state(db, state, step="MENU")
+        return
+
+    # ------------------------------------------------------------------
+    # AWAITING_SERVICE_CONFIRM
+    # ------------------------------------------------------------------
     if step == "AWAITING_SERVICE_CONFIRM":
         if _is_affirmative(text_clean):
-            await wa.send_text(phone, T(lang, "ask_name"))
+            await _ask_full_name(phone)
             await save_state(db, state, step="AWAITING_FULL_NAME")
         else:
-            await wa.send_text(phone, T(lang, "later")); await save_state(db, state, step="MENU")
+            await wa.send_text(
+                phone,
+                "Sin problema. Escribe 'hola' cuando quieras tu carta astral.\n\n"
+                f"_{BRANDING}_",
+            )
+            await save_state(db, state, step="MENU")
         return
 
+    # ------------------------------------------------------------------
+    # AWAITING_FULL_NAME
+    # ------------------------------------------------------------------
     if step == "AWAITING_FULL_NAME":
         if len(text_clean) < 3:
-            await wa.send_text(phone, T(lang, "short_name")); return
+            await wa.send_text(phone, "Ese nombre parece muy corto. Comparte tu nombre completo:")
+            return
         await save_state(db, state, step="AWAITING_BIRTH_DATE", data_update={"full_name": text_clean})
-        await wa.send_text(phone, T(lang, "ask_date", n=text_clean.split()[0])); return
+        await wa.send_text(
+            phone,
+            f"Gracias, {text_clean.split()[0]}.\n\n"
+            "Cual es tu *fecha de nacimiento*? (Ej: 15/03/1990)",
+        )
+        return
 
+    # ------------------------------------------------------------------
+    # AWAITING_BIRTH_DATE
+    # ------------------------------------------------------------------
     if step == "AWAITING_BIRTH_DATE":
-        bd = _parse_date(text_clean)
-        if not bd:
-            await wa.send_text(phone, T(lang, "bad_date")); return
-        await save_state(db, state, step="AWAITING_BIRTH_TIME", data_update={"birth_date": bd})
-        await wa.send_text(phone, T(lang, "ask_time")); return
+        birth_date = _parse_date(text_clean)
+        if not birth_date:
+            await wa.send_text(
+                phone, "No pude leer esa fecha. Usa el formato DD/MM/AAAA, ej: 15/03/1990"
+            )
+            return
+        await save_state(db, state, step="AWAITING_BIRTH_TIME", data_update={"birth_date": birth_date})
+        await wa.send_text(
+            phone,
+            "A que *hora* naciste? (Ej: 14:30)\n\n"
+            "Si no la sabes, escribe *'no se'* y seguimos.",
+        )
+        return
 
+    # ------------------------------------------------------------------
+    # AWAITING_BIRTH_TIME
+    # ------------------------------------------------------------------
     if step == "AWAITING_BIRTH_TIME":
-        bt = None
+        birth_time = None
         if not _is_unknown(text_clean):
-            bt = _parse_time(text_clean)
-            if bt is None:
-                await wa.send_text(phone, T(lang, "bad_time")); return
-        await save_state(db, state, step="AWAITING_BIRTH_PLACE", data_update={"birth_time": bt})
-        await wa.send_text(phone, T(lang, "ask_place")); return
-
-    if step == "AWAITING_BIRTH_PLACE":
-        place = None if _is_unknown(text_clean) else text_clean
-        await save_state(db, state, step="AWAITING_GENDER", data_update={"birth_place": place})
-        await wa.send_buttons(phone, T(lang, "ask_gender"),
-            buttons=[{"id":"genero_m","title":T(lang,"g_m")},
-                     {"id":"genero_f","title":T(lang,"g_f")},
-                     {"id":"genero_x","title":T(lang,"g_x")}])
-        return
-
-    if step == "AWAITING_GENDER":
-        gmap = {"genero_m":T(lang,"g_m"),"genero_f":T(lang,"g_f"),"genero_x":T(lang,"g_x")}
-        gender = gmap.get(text_clean, text_clean)
-        await save_state(db, state, step="AWAITING_Q1", data_update={"birth_gender": gender})
-        await wa.send_text(phone, T(lang, "ask_q1")); return
-
-    if step in ["AWAITING_Q1","AWAITING_Q2","AWAITING_Q3","AWAITING_Q4","AWAITING_Q5"]:
-        n = int(step[-1])
-        if len(text_clean) < 5:
-            await wa.send_text(phone, T(lang, "short_q", i=n)); return
-        if n < 5:
-            await save_state(db, state, step=f"AWAITING_Q{n+1}", data_update={f"q{n}": text_clean})
-            await wa.send_text(phone, T(lang, "next_q", i=n+1))
-        else:
-            await save_state(db, state, step="AWAITING_TERMS", data_update={"q5": text_clean})
-            await wa.send_buttons(phone, T(lang, "terms_body"),
-                buttons=[{"id":"acepto_terminos","title":T(lang,"b_accept")},
-                         {"id":"cancelar_compra","title":T(lang,"b_cancel")}])
-        return
-
-    if step == "AWAITING_TERMS":
-        if text_clean == "acepto_terminos" or _is_affirmative(text_clean):
-            await save_state(db, state, step="GENERATING",
-                             data_update={"terms_accepted": True,
-                                          "terms_accepted_at": datetime.utcnow().isoformat()})
-            await wa.send_text(phone, T(lang, "generating"))
-            await _generate_and_prepare_payment(db, state, phone)
-        else:
-            await wa.send_text(phone, T(lang, "terms_need")); await save_state(db, state, step="MENU")
-        return
-
-    if step == "GENERATING":
-        # Ya se esta generando la lectura (2 llamadas a Claude + PDF, 30-60s).
-        # Meta reintenta el webhook si no respondemos rapido: ignoramos los
-        # reintentos para no generar carta ni link por duplicado.
-        return
-
-    if step == "AWAITING_PAYMENT":
-        url = data.get("payment_url", "")
-        if url:
-            await wa.send_text(phone, url)
-            await wa.send_buttons(phone, T(lang, "cont"),
-                buttons=[{"id":"reenviar_link","title":T(lang,"b_paid")},
-                         {"id":"cancelar_compra","title":T(lang,"b_cancel")}])
-        else:
-            await save_state(db, state, step="MENU"); await wa.send_text(phone, T(lang, "restart"))
-        return
-
-    # COMPLETED u otros
-    await save_state(db, state, step="MENU"); await wa.send_text(phone, T(lang, "restart"))
-
-async def handle_button_reply(db, phone, button_id):
-    if button_id == "cancelar_compra":
-        r = await db.execute(select(ConversationState).where(ConversationState.phone_number == phone))
-        st = r.scalar_one_or_none()
-        lang = (st.collected_data or {}).get("lang","es") if st else "es"
-        if st: await save_state(db, st, step="MENU", data_update={})
-        await wa.send_text(phone, T(lang, "later")); return
-    if button_id == "reenviar_link":
-        r = await db.execute(select(ConversationState).where(ConversationState.phone_number == phone))
-        st = r.scalar_one_or_none()
-        d = (st.collected_data or {}) if st else {}
-        lang = d.get("lang", "es")
-        # Anti-doble-toque: ignora repeticiones dentro de 15s (evita triple link)
-        now = datetime.utcnow()
-        last = d.get("last_resend_at")
-        if last:
-            try:
-                if (now - datetime.fromisoformat(last)).total_seconds() < 15:
-                    return
-            except Exception:
-                pass
-        # Si el pago ya se confirmo, entrega el PDF en vez de reenviar el link
-        chart_id = d.get("chart_id")
-        if chart_id:
-            cr = await db.execute(select(NatalChart).where(NatalChart.id == chart_id))
-            chart = cr.scalar_one_or_none()
-            if chart and chart.payment_status == "paid":
-                if st: await save_state(db, st, data_update={"last_resend_at": now.isoformat()})
-                if not getattr(chart, "delivered", False):
-                    await deliver_paid_chart(db, chart)
+            birth_time = _parse_time(text_clean)
+            if birth_time is None:
+                await wa.send_text(
+                    phone,
+                    "No pude leer esa hora. Usa formato HH:MM (24h), ej: 14:30, o escribe 'no se'.",
+                )
                 return
-        # Aun no pagado: reenvia el link UNA sola vez (sin botones, para no duplicar)
-        if st: await save_state(db, st, data_update={"last_resend_at": now.isoformat()})
-        url = d.get("payment_url", "")
-        await wa.send_text(phone, url or T(lang, "restart")); return
-    mapping = {"quiero_carta":"si","no_gracias":"no",
-               "genero_m":"genero_m","genero_f":"genero_f","genero_x":"genero_x",
-               "acepto_terminos":"acepto_terminos"}
-    await handle_incoming_text(db, phone, mapping.get(button_id, button_id))
+        await save_state(
+            db, state, step="AWAITING_BIRTH_PLACE", data_update={"birth_time": birth_time}
+        )
+        await wa.send_text(
+            phone,
+            "En que ciudad y pais naciste? (Ej: Ciudad de Mexico, Mexico)\n\n"
+            "Si no lo recuerdas escribe *'no se'*.",
+        )
+        return
 
-# Compat: main.py llama handle_button_click en algunas versiones
-async def handle_button_click(db, phone, button_id):
-    return await handle_button_reply(db, phone, button_id)
+    # ------------------------------------------------------------------
+    # AWAITING_BIRTH_PLACE
+    # ------------------------------------------------------------------
+    if step == "AWAITING_BIRTH_PLACE":
+        birth_place = None if _is_unknown(text_clean) else text_clean
+        await save_state(
+            db, state, step="AWAITING_GENDER", data_update={"birth_place": birth_place}
+        )
+        await wa.send_buttons(
+            phone,
+            "Cual es tu genero? (Ayuda a personalizar tu lectura)",
+            buttons=[
+                {"id": "genero_m", "title": "Masculino"},
+                {"id": "genero_f", "title": "Femenino"},
+                {"id": "genero_x", "title": "Prefiero no decir"},
+            ],
+        )
+        return
 
-async def _generate_and_prepare_payment(db, state, phone):
+    # ------------------------------------------------------------------
+    # AWAITING_GENDER (via texto, en caso de que no use botones)
+    # ------------------------------------------------------------------
+    if step == "AWAITING_GENDER":
+        g = text_clean.lower()
+        if "masc" in g or g in {"m", "hombre"}:
+            genero = "Masculino"
+        elif "fem" in g or g in {"f", "mujer"}:
+            genero = "Femenino"
+        else:
+            genero = "Prefiero no decir"
+        await save_state(db, state, step="AWAITING_Q1", data_update={"birth_gender": genero})
+        await wa.send_text(
+            phone,
+            "Perfecto. Ahora escribe tu *primera pregunta* para la tirada de Tarot.\n"
+            "Puede ser cualquier pregunta sobre tu vida (amor, trabajo, salud...).\n\n"
+            "Pregunta 1 de 5:",
+        )
+        return
+
+    # ------------------------------------------------------------------
+    # AWAITING_Q1 .. Q5
+    # ------------------------------------------------------------------
+    for qi in range(1, 6):
+        if step == f"AWAITING_Q{qi}":
+            if len(text_clean) < 5:
+                await wa.send_text(phone, f"Escribe una pregunta un poco mas completa (pregunta {qi} de 5):")
+                return
+            datos = {f"q{qi}": text_clean}
+            if qi < 5:
+                siguiente_step = f"AWAITING_Q{qi + 1}"
+                await save_state(db, state, step=siguiente_step, data_update=datos)
+                await wa.send_text(
+                    phone,
+                    f"Pregunta {qi + 1} de 5:",
+                )
+            else:
+                # Ultima pregunta -> ir a facturacion o generar directamente
+                await save_state(db, state, step="AWAITING_INVOICE_MX", data_update=datos)
+                await _preguntar_facturacion(db, state, phone)
+            return
+
+    # ------------------------------------------------------------------
+    # AWAITING_INVOICE_MX (BUG2 - solo para +52)
+    # ------------------------------------------------------------------
+    if step == "AWAITING_INVOICE_MX":
+        if _is_affirmative(text_clean) or "si" in text_clean.lower():
+            await save_state(db, state, step="AWAITING_RFC")
+            await wa.send_text(
+                phone,
+                "Escribe en un mensaje tus datos de facturacion en este formato:\n\n"
+                "RFC: XXXX000000XXX\n"
+                "Razon Social: Tu Empresa S.A.\n"
+                "CP Fiscal: 06600\n"
+                "Regimen Fiscal: 601\n"
+                "Uso CFDI: G03",
+            )
+        else:
+            # No requiere factura o extranjero: RFC XAXX/XEXX automatico
+            rfc_generico = "XAXX010101000" if _es_mexico(phone) else "XEXX010101000"
+            await save_state(
+                db, state, step="GENERATING",
+                data_update={"rfc": rfc_generico, "requiere_factura": False}
+            )
+            await wa.send_text(phone, "Generando tu carta astral, dame un momento...")
+            await _generate_and_prepare_payment(db, state, phone)
+        return
+
+    # ------------------------------------------------------------------
+    # AWAITING_RFC (BUG2 - usuario mexicano que si quiere factura)
+    # ------------------------------------------------------------------
+    if step == "AWAITING_RFC":
+        rfc_data = _parse_rfc_data(text_clean)
+        if not rfc_data:
+            await wa.send_text(
+                phone,
+                "No pude leer tus datos. Asegurate de incluir RFC, Razon Social, CP Fiscal, "
+                "Regimen Fiscal y Uso CFDI.\n\nIntenta de nuevo:",
+            )
+            return
+        rfc_data["requiere_factura"] = True
+        await save_state(db, state, step="GENERATING", data_update=rfc_data)
+        await wa.send_text(phone, "Datos de facturacion guardados. Generando tu carta astral...")
+        await _generate_and_prepare_payment(db, state, phone)
+        return
+
+    # ------------------------------------------------------------------
+    # AWAITING_PAYMENT
+    # ------------------------------------------------------------------
+    if step == "AWAITING_PAYMENT":
+        payment_url = (state.collected_data or {}).get("payment_url", "")
+        msg = f"Tu carta astral ya esta lista. Completa el pago de ${PRICE_MXN} MXN para recibirla."
+        if payment_url:
+            msg += f"\n\n{payment_url}"
+        await wa.send_text(phone, msg)
+        return
+
+    # ------------------------------------------------------------------
+    # COMPLETED
+    # ------------------------------------------------------------------
+    if step == "COMPLETED":
+        if _is_affirmative(text_clean) or "otra" in text_clean.lower():
+            await save_state(db, state, step="MENU", data_update={})
+            await handle_incoming_text(db, phone, "hola")
+        else:
+            await wa.send_buttons(
+                phone,
+                "Que deseas hacer?",
+                buttons=[
+                    {"id": "otra_carta_si", "title": "Otra carta astral"},
+                    {"id": "otra_carta_no", "title": "Por ahora no"},
+                ],
+            )
+        return
+
+    # Fallback
+    await save_state(db, state, step="MENU")
+    await wa.send_text(phone, "Vamos a empezar de nuevo. Escribe 'hola'.")
+
+
+# ============================================================================
+# Punto de entrada: botones interactivos
+# ============================================================================
+
+async def handle_button_reply(db: AsyncSession, phone: str, button_id: str):
+    """Traduce clicks de boton al flujo de texto."""
+    mapping = {
+        # Consentimiento
+        "consent_si": "si",
+        "consent_no": "no",
+        # Servicio
+        "quiero_carta": "si",
+        "no_gracias": "no",
+        # Genero
+        "genero_m": "Masculino",
+        "genero_f": "Femenino",
+        "genero_x": "Prefiero no decir",
+        # Factura
+        "factura_si": "si",
+        "factura_no": "no",
+        # Post-completado
+        "otra_carta_si": "si, quiero otra",
+        "otra_carta_no": "no gracias",
+        # Reenvio link
+        "reenviar_link": "__reenviar_link__",
+        # Cancelar compra
+        "cancelar_compra": "cancelar",
+    }
+
+    if button_id == "reenviar_link":
+        await _reenviar_link(phone)
+        return
+
+    text_equivalent = mapping.get(button_id, button_id)
+    await handle_incoming_text(db, phone, text_equivalent)
+
+
+# ============================================================================
+# BUG2: logica de facturacion segun lada
+# ============================================================================
+
+async def _preguntar_facturacion(db: AsyncSession, state: ConversationState, phone: str):
+    """
+    BUG2: Si lada es +52 -> pregunta si requiere factura.
+    Si es extranjero -> RFC XEXX automatico, va directo a generar.
+    """
+    if _es_mexico(phone):
+        await wa.send_text(
+            phone,
+            "Por ley en Mexico toda compra se factura automaticamente.\n"
+            "Requieres factura con tu RFC?",
+        )
+        await wa.send_buttons(
+            phone,
+            "Selecciona:",
+            buttons=[
+                {"id": "factura_si", "title": "Si, requiero factura"},
+                {"id": "factura_no", "title": "No, publico en general"},
+            ],
+        )
+        await save_state(db, state, step="AWAITING_INVOICE_MX")
+    else:
+        # Extranjero: sin pregunta, RFC XEXX automatico
+        await save_state(
+            db, state, step="GENERATING",
+            data_update={"rfc": "XEXX010101000", "requiere_factura": False}
+        )
+        await wa.send_text(phone, "Generando tu carta astral, dame un momento...")
+        await _generate_and_prepare_payment(db, state, phone)
+
+
+# ============================================================================
+# Generacion de carta + PDF + link de pago (BUG7: guard pdf_path)
+# ============================================================================
+
+async def _generate_and_prepare_payment(
+    db: AsyncSession, state: ConversationState, phone: str
+):
     data = state.collected_data or {}
-    lang = data.get("lang","es")
-    full_name = data.get("full_name"); birth_date = data.get("birth_date")
-    birth_time = data.get("birth_time"); birth_place = data.get("birth_place")
-    gender = data.get("birth_gender")
-    questions = [data.get(f"q{i}") for i in range(1,6) if data.get(f"q{i}")]
+    full_name = data.get("full_name")
+    birth_date = data.get("birth_date")
+    birth_time = data.get("birth_time")
+    birth_place = data.get("birth_place") or "No especificado"
+    birth_gender = data.get("birth_gender") or "No especificado"
+
+    # Recopilar preguntas
+    questions = [
+        data.get(f"q{i}") for i in range(1, 6) if data.get(f"q{i}")
+    ]
+
+    # Anti-duplicate: si ya hay chart_id y payment_url no regenerar
+    if data.get("chart_id") and data.get("payment_url"):
+        await wa.send_text(
+            phone,
+            f"Tu carta ya esta lista. Realiza tu pago aqui:\n\n{data['payment_url']}\n\n"
+            f"_{BRANDING}_",
+        )
+        return
+
     try:
+        logger.info(f"[Flow] Generando carta para {phone} - {birth_date}")
+
         if birth_time:
             reading = await astro.generate_natal_chart_complete(
-                birth_date, birth_time, birth_location=birth_place, gender=gender, lang=lang)
+                birth_date, birth_time, birth_location=birth_place, questions=questions
+            )
         else:
-            reading = await astro.generate_natal_chart_simple(
-                birth_date, birth_place=birth_place, gender=gender, lang=lang)
+            reading = await astro.generate_natal_chart_simple(birth_date, questions=questions)
+
         if not reading:
             raise ValueError("Claude no devolvio lectura valida")
-        reading["birth_place"] = birth_place or "No especificado"
-        reading["birth_gender"] = gender or "No especificado"
 
-        if questions:
-            tarot = await astro.generate_tarot_reading(questions, lang=lang)
-            if tarot and tarot.get("readings"):
-                reading["tarot_readings"] = tarot["readings"]
-                if tarot.get("overall_message"):
-                    reading["overall_message"] = tarot["overall_message"]
+        # Forzar birth_place y gender en el reading antes de PDF
+        reading["birth_place"] = birth_place
+        reading["birth_gender"] = birth_gender
 
-        pdf_path, cover_used = build_natal_chart_pdf(full_name, birth_date, birth_time, reading)
+        # BUG7: build PDF con guard
+        logger.info(f"[Flow] Construyendo PDF para {full_name}")
+        pdf_path, cover_used = build_natal_chart_pdf(
+            full_name=full_name,
+            birth_date=birth_date,
+            birth_time=birth_time,
+            reading=reading,
+        )
 
+        if not pdf_path:
+            raise ValueError("build_natal_chart_pdf retorno pdf_path=None")
+
+        logger.info(f"[Flow] PDF generado: {pdf_path}")
+
+        # Guardar NatalChart en BD
+        tarot_readings = reading.get("tarot_readings", [])
         chart = NatalChart(
-            phone_number=phone, full_name=full_name, birth_date=birth_date, birth_time=birth_time,
-            birth_place=birth_place, gender=gender,
-            zodiac_western=_sign_short(reading.get("zodiac_western"), 20),
-            zodiac_chinese=_sign_short(reading.get("zodiac_chinese"), 50),
-            zodiac_celtic=_sign_short(reading.get("zodiac_celtic"), 50),
-            zodiac_mayan=_sign_short(reading.get("zodiac_mayan"), 50),
-            zodiac_egyptian=_sign_short(reading.get("zodiac_egyptian"), 50),
-            interpretation_json=reading, cover_used=cover_used, pdf_path=pdf_path,
-            pdf_ready=True, payment_status="pending")
-        db.add(chart); await db.commit(); await db.refresh(chart)
+            phone_number=phone,
+            full_name=full_name,
+            birth_date=birth_date,
+            birth_time=birth_time,
+            birth_place=birth_place,
+            gender=birth_gender,
+            zodiac_western=reading.get("zodiac_western"),
+            zodiac_chinese=reading.get("zodiac_chinese"),
+            zodiac_celtic=reading.get("zodiac_celtic"),
+            zodiac_mayan=reading.get("zodiac_mayan"),
+            zodiac_egyptian=reading.get("zodiac_egyptian"),
+            interpretation_json=reading,
+            cover_used=cover_used,
+            pdf_path=pdf_path,
+            pdf_ready=True,
+            payment_status="pending",
+            rfc=data.get("rfc"),
+            requiere_factura=data.get("requiere_factura", False),
+        )
+        db.add(chart)
+        await db.commit()
+        await db.refresh(chart)
 
+        # Link de pago Stripe
         payment_url = await create_payment_link(
-            amount_mxn=PRICE_MXN, reference_id=chart.id,
-            description=f"Carta Astral + 5 Tarot - {full_name}")
-        await save_state(db, state, step="AWAITING_PAYMENT",
-                         data_update={"chart_id": chart.id, "payment_url": payment_url})
-        await wa.send_text(phone, T(lang, "sealed",
-                           n=(full_name or "").split()[0], w=_sign_short(reading.get("zodiac_western","")) or "", u=payment_url))
-        await wa.send_buttons(phone, T(lang, "cont"),
-            buttons=[{"id":"reenviar_link","title":T(lang,"b_paid")},
-                     {"id":"cancelar_compra","title":T(lang,"b_cancel")}])
-    except Exception as e:
-        logger.error(f"Error generando: {e}", exc_info=True)
-        await wa.send_text(phone, T(lang, "err")); await save_state(db, state, step="MENU")
+            amount_mxn=PRICE_MXN,
+            reference_id=chart.id,
+            description=f"Carta Astral - {full_name}",
+        )
 
-async def deliver_paid_chart(db, chart):
-    chart.payment_status = "paid"; await db.commit()
-    r = await db.execute(select(ConversationState).where(ConversationState.phone_number == chart.phone_number))
-    st = r.scalar_one_or_none()
-    lang = (st.collected_data or {}).get("lang","es") if st else "es"
-    await wa.send_document(chart.phone_number, chart.pdf_path,
-        caption=T(lang, "delivered", n=(chart.full_name or "").split()[0]),
-        filename="Morgan-IA.pdf")
-    chart.delivered = True; await db.commit()
-    if st: await save_state(db, st, step="COMPLETED")
+        await save_state(
+            db, state,
+            step="AWAITING_PAYMENT",
+            data_update={"chart_id": chart.id, "payment_url": payment_url},
+        )
+
+        # Mensaje de pago con branding (BUG6)
+        primer_nombre = (full_name or "").split()[0] if full_name else "amig@"
+        signo = reading.get("zodiac_western", "")
+        await wa.send_text(
+            phone,
+            f"Tu carta astral esta lista, {primer_nombre}.\n\n"
+            f"Tu signo occidental es *{signo}*.\n\n"
+            f"Para recibir el PDF completo (5 paginas) realiza tu pago de "
+            f"*${PRICE_MXN} MXN* aqui:\n\n"
+            f"{payment_url}\n\n"
+            f"En cuanto se confirme, te lo mando de inmediato.\n\n"
+            f"_{BRANDING}_",
+        )
+
+    except Exception as e:
+        logger.error(f"[Flow] Error generando carta: {e}", exc_info=True)
+        await wa.send_text(
+            phone,
+            "Tuve un problema generando tu carta. "
+            "Escribe 'hola' en un momento para intentar de nuevo.",
+        )
+        await save_state(db, state, step="MENU")
+
+
+# ============================================================================
+# Entrega del PDF tras confirmar pago (BUG7: guard pdf_path)
+# ============================================================================
+
+async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
+    """Entrega el PDF al usuario via WhatsApp y marca como entregado."""
+    logger.info(f"[Deliver] Iniciando entrega para chart {chart.id} - {chart.phone_number}")
+
+    if not chart.pdf_path:
+        logger.error(f"[Deliver] pdf_path es None para chart {chart.id}. No se puede entregar.")
+        await wa.send_text(
+            chart.phone_number,
+            "Hubo un problema con tu carta. Por favor escribe 'hola' para regenerarla.",
+        )
+        return
+
+    chart.payment_status = "paid"
+    await db.commit()
+
+    primer_nombre = (chart.full_name or "").split()[0] if chart.full_name else "amig@"
+
+    await wa.send_document(
+        chart.phone_number,
+        chart.pdf_path,
+        caption=(
+            f"Aqui esta tu Carta Astral, {primer_nombre}. Gracias por tu confianza.\n\n"
+            f"_{BRANDING}_"
+        ),
+    )
+
+    chart.delivered = True
+    await db.commit()
+    logger.info(f"[Deliver] PDF entregado para chart {chart.id}")
+
+    result = await db.execute(
+        select(ConversationState).where(
+            ConversationState.phone_number == chart.phone_number
+        )
+    )
+    state = result.scalar_one_or_none()
+    if state:
+        await save_state(db, state, step="COMPLETED")
+
+    await wa.send_buttons(
+        chart.phone_number,
+        "Deseas hacer otra lectura?",
+        buttons=[
+            {"id": "otra_carta_si", "title": "Si, otra carta"},
+            {"id": "otra_carta_no", "title": "Por ahora no"},
+        ],
+    )
+
+
+# ============================================================================
+# Helpers internos
+# ============================================================================
+
+async def _preguntar_servicio(phone: str):
+    await wa.send_text(
+        phone,
+        f"Puedo generarte tu *Carta Astral* personalizada:\n\n"
+        f"- Signo occidental, chino, celta, maya y egipcio\n"
+        f"- Posiciones planetarias\n"
+        f"- Tirada de Tarot Egipcio (5 preguntas)\n"
+        f"- Horoscopo semanal\n\n"
+        f"Todo por *${PRICE_MXN} MXN*. Pagas solo cuando tu lectura este lista.\n\n"
+        f"Deseas que te la genere?\n\n"
+        f"_{BRANDING}_",
+    )
+    await wa.send_buttons(
+        phone,
+        "Selecciona:",
+        buttons=[
+            {"id": "quiero_carta", "title": "Si, quiero mi carta"},
+            {"id": "no_gracias", "title": "No, gracias"},
+        ],
+    )
+
+
+async def _ask_full_name(phone: str):
+    await wa.send_text(
+        phone,
+        "Perfecto. Para generar tu carta astral necesito:\n\n"
+        "1. Nombre completo\n"
+        "2. Fecha de nacimiento\n"
+        "3. Hora de nacimiento (si la sabes)\n"
+        "4. Ciudad de nacimiento\n"
+        "5. Genero\n"
+        "6. 5 preguntas para el Tarot\n\n"
+        "Empecemos: cual es tu *nombre completo*?",
+    )
+
+
+async def _reenviar_link(phone: str):
+    """Reenvio del link de pago si el usuario lo solicita."""
+    # Esta funcion requiere DB pero handle_button_reply no la pasa.
+    # Lo manejamos via handle_incoming_text con un mensaje especial.
+    await wa.send_text(
+        phone,
+        "Escribe 'link de pago' para que te reenvie el link.",
+    )
+
+
+def _parse_rfc_data(text: str) -> dict | None:
+    """
+    Extrae RFC, razon social, CP, regimen fiscal y uso CFDI de un mensaje.
+    Acepta formato:
+        RFC: XXXX000000XXX
+        Razon Social: Nombre
+        CP Fiscal: 06600
+        Regimen Fiscal: 601
+        Uso CFDI: G03
+    """
+    result = {}
+    lines = text.strip().split("\n")
+    for line in lines:
+        if ":" in line:
+            clave, _, valor = line.partition(":")
+            clave = clave.strip().lower()
+            valor = valor.strip()
+            if "rfc" in clave:
+                rfc = re.sub(r"\s", "", valor).upper()
+                # Validacion basica: 12 o 13 caracteres alfanumericos
+                if re.match(r"^[A-Z&]{3,4}[0-9]{6}[A-Z0-9]{3}$", rfc):
+                    result["rfc"] = rfc
+                else:
+                    return None  # RFC invalido
+            elif "razon" in clave or "social" in clave:
+                result["razon_social"] = valor
+            elif "cp" in clave or "postal" in clave:
+                result["cp_fiscal"] = valor
+            elif "regimen" in clave:
+                result["regimen_fiscal"] = valor
+            elif "uso" in clave or "cfdi" in clave:
+                result["uso_cfdi"] = valor
+
+    # Minimo necesario: RFC
+    if "rfc" not in result:
+        return None
+    return result
+
+
+def _is_affirmative(text: str) -> bool:
+    return text.lower().strip() in {"si", "si!", "yes", "claro", "quiero", "ok", "va", "dale", "s"}
+
+
+def _is_unknown(text: str) -> bool:
+    t = text.lower()
+    return "no s" in t or "no se" in t or "no se" in t or "desconoc" in t
+
+
+def _parse_date(text: str):
+    """Acepta DD/MM/AAAA o DD-MM-AAAA y retorna 'AAAA-MM-DD'."""
+    for sep in ["/", "-"]:
+        parts = text.strip().split(sep)
+        if len(parts) == 3:
+            try:
+                day, month, year = parts
+                d = datetime(int(year), int(month), int(day))
+                return d.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+    return None
+
+
+def _parse_time(text: str):
+    """Acepta HH:MM y retorna 'HH:MM'."""
+    text = text.strip()
+    try:
+        t = datetime.strptime(text, "%H:%M")
+        return t.strftime("%H:%M")
+    except ValueError:
+        return None

@@ -2,6 +2,10 @@
 pdf_generator.py - Reescrito v3 (coordenadas ajustadas a las plantillas reales)
 Canvas 2500x3300. Texto centrado por recuadro (proporciones 0-1).
 Orden: 1) Portada 2) Posicion Planetaria/Carta Astral 3) Afinidades+Signos 4) Tarot 5) Horoscopo
+
+CAMBIOS v3.1 (BUG6):
+- Branding "Un producto de Sincronia Tech Developers S.A.S. - www.sincron-ia.com.mx"
+  en el footer de CADA pagina del PDF.
 """
 import os, glob, random, logging, unicodedata
 from datetime import datetime
@@ -18,6 +22,10 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 CANVAS_W, CANVAS_H = 2500, 3300
 DARK = (35, 25, 10)
 GOLD = (150, 110, 15)
+GRAY = (120, 110, 100)
+
+# BUG6: Texto de branding en footer
+BRANDING_FOOTER = "Un producto de Sincronia Tech Developers S.A.S.  |  www.sincron-ia.com.mx"
 
 TPL_CARTA = "carta_astral.jpeg"
 TPL_AFIN = "afinidades.jpeg"
@@ -115,7 +123,7 @@ def _centered(d, text, cx_rel, cy_rel, W, H, font, box_rel, max_lines=6, gap=48,
         cut = kept.rfind(".")
         kept = kept[:cut + 1] if cut >= 40 else kept.rstrip(" ,;:") + "."
         all_lines = _wrap(d, kept, font, int(W * box_rel))[:max_lines]
-    lines = all_lines  
+    lines = all_lines
     if not lines:
         return
     cx, cy = int(W * cx_rel), int(H * cy_rel)
@@ -131,6 +139,31 @@ def _open_tpl(name):
         logger.warning(f"Falta plantilla: {path}")
         return None
     return Image.open(path).convert("RGB").resize((CANVAS_W, CANVAS_H))
+
+
+# BUG6: Helper que dibuja el footer de branding en cada pagina
+def _draw_branding_footer(img: Image.Image) -> None:
+    """
+    Dibuja el texto de branding en la parte inferior de cada pagina del PDF.
+    Posicion: parte inferior centrada, margen 60px del borde inferior.
+    """
+    d = ImageDraw.Draw(img)
+    W, H = img.size
+    font = _font(28)  # Tamano pequeno para no interferir con el contenido
+    text = BRANDING_FOOTER
+    # Medir ancho del texto para centrarlo
+    try:
+        bbox = d.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+    except AttributeError:
+        # Fallback para versiones antiguas de Pillow
+        text_w = d.textlength(text, font=font)
+    x = (W - text_w) // 2
+    y = H - 70  # 70px del borde inferior
+    # Sombra sutil para legibilidad sobre cualquier fondo
+    d.text((x + 1, y + 1), text, fill=(200, 200, 200), font=font)
+    d.text((x, y), text, fill=GRAY, font=font)
+
 
 def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -151,7 +184,9 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
     cover_path = pick_cover(western)
     cover_used = os.path.basename(cover_path) if cover_path else "sin_portada"
     if cover_path:
-        pages.append(Image.open(cover_path).convert("RGB").resize((CANVAS_W, CANVAS_H)))
+        cover_img = Image.open(cover_path).convert("RGB").resize((CANVAS_W, CANVAS_H))
+        _draw_branding_footer(cover_img)  # BUG6: footer en portada
+        pages.append(cover_img)
 
     # --- PAGINA 2: POSICION PLANETARIA / CARTA ASTRAL ---
     img = _open_tpl(TPL_CARTA)
@@ -168,6 +203,7 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
         _centered(d, reading.get("descendente", ""), *c["dc"], W, H, f_small, c["box"], 6, GAP_S)
         _centered(d, reading.get("medio_cielo", ""), *c["mc"], W, H, f_small, c["box"], 6, GAP_S)
         _centered(d, reading.get("fondo_cielo", ""),  *c["ic"], W, H, f_small, c["box"], 6, GAP_S)
+        _draw_branding_footer(img)  # BUG6: footer
         pages.append(img)
 
     # --- PAGINA 3: AFINIDADES + SIGNOS (2 columnas) ---
@@ -182,6 +218,7 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
         _centered(d, reading.get("zodiac_celtic", ""),   *c["celta"],   W, H, f_small, c["box"], 6, GAP_S)
         _centered(d, reading.get("zodiac_mayan", ""),    *c["maya"],    W, H, f_small, c["box"], 6, GAP_S)
         _centered(d, reading.get("zodiac_egyptian", ""), *c["egipcio"], W, H, f_small, c["box"], 6, GAP_S)
+        _draw_branding_footer(img)  # BUG6: footer
         pages.append(img)
 
     # --- PAGINA 4: TAROT ---
@@ -194,6 +231,7 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
             head = f"{cards}  ->  {t.get('answer','')}"
             d.text((int(W*cx), int(H*cy)), head, fill=GOLD, font=f_lbl, anchor="ma")
             _centered(d, t.get("interpretation", ""), cx, cy + 0.055, W, H, f_small, c["box"], 6, GAP_S)
+        _draw_branding_footer(img)  # BUG6: footer
         pages.append(img)
 
     # --- PAGINA 5: HOROSCOPO SEMANAL ---
@@ -207,6 +245,7 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
         d.text((int(W*c["dia"][0]),    int(H*c["dia"][1])),    str(horo.get("dia_suerte", "")),    fill=DARK, font=f_reg, anchor="lm")
         d.text((int(W*c["color"][0]),  int(H*c["color"][1])),  str(horo.get("color_suerte", "")),  fill=DARK, font=f_reg, anchor="lm")
         d.text((int(W*c["numero"][0]), int(H*c["numero"][1])), str(horo.get("numero_suerte", "")), fill=DARK, font=f_reg, anchor="lm")
+        _draw_branding_footer(img)  # BUG6: footer
         pages.append(img)
 
     if not pages:
