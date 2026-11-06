@@ -505,19 +505,19 @@ async def _generate_and_prepare_payment(
         reading["birth_place"] = birth_place
         reading["birth_gender"] = birth_gender
 
-        # BUG7: build PDF con guard
+        # PDF.co: genera en memoria y sube a la nube — retorna URL publica
         logger.info(f"[Flow] Construyendo PDF para {full_name}")
-        pdf_path, cover_used = build_natal_chart_pdf(
+        pdf_url, cover_used = await build_natal_chart_pdf(
             full_name=full_name,
             birth_date=birth_date,
             birth_time=birth_time,
             reading=reading,
         )
 
-        if not pdf_path:
-            raise ValueError("build_natal_chart_pdf retorno pdf_path=None")
+        if not pdf_url:
+            raise ValueError("build_natal_chart_pdf retorno url vacia")
 
-        logger.info(f"[Flow] PDF generado: {pdf_path}")
+        logger.info(f"[Flow] PDF generado: {pdf_url}")
 
         # Guardar NatalChart en BD
         tarot_readings = reading.get("tarot_readings", [])
@@ -535,7 +535,7 @@ async def _generate_and_prepare_payment(
             zodiac_egyptian=reading.get("zodiac_egyptian"),
             interpretation_json=reading,
             cover_used=cover_used,
-            pdf_path=pdf_path,
+            pdf_path=pdf_url,   # URL de PDF.co, no ruta local
             pdf_ready=True,
             payment_status="pending",
             rfc=data.get("rfc"),
@@ -603,9 +603,11 @@ async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
 
     primer_nombre = (chart.full_name or "").split()[0] if chart.full_name else "amig@"
 
+    # pdf_path es URL publica de PDF.co — send_document la envia por link directo
     await wa.send_document(
         chart.phone_number,
-        chart.pdf_path,
+        file_path=chart.pdf_path,
+        filename=f"CartaAstral_{primer_nombre}.pdf",
         caption=(
             f"Aqui esta tu Carta Astral, {primer_nombre}. Gracias por tu confianza.\n\n"
             f"_{BRANDING}_"
