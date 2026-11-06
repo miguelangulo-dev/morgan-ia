@@ -598,7 +598,13 @@ async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
         )
         return
 
+    # Guard anti-doble-entrega
+    if chart.delivered:
+        logger.info(f"[Deliver] Chart {chart.id} ya entregado anteriormente, omitiendo.")
+        return
+
     chart.payment_status = "paid"
+    chart.delivered = True  # marcar ANTES de enviar para bloquear segunda llamada concurrente
     await db.commit()
 
     primer_nombre = (chart.full_name or "").split()[0] if chart.full_name else "amig@"
@@ -614,8 +620,6 @@ async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
         ),
     )
 
-    chart.delivered = True
-    await db.commit()
     logger.info(f"[Deliver] PDF entregado para chart {chart.id}")
 
     result = await db.execute(

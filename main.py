@@ -150,10 +150,10 @@ async def pago_exitoso(request: Request):
             logger.error(f"Chart {chart_id} no encontrado en pago-exitoso")
             return HTMLResponse("<h1>Pago recibido, pero no encontre tu carta. Escribe hola en WhatsApp</h1>")
 
-        if chart.payment_status != "paid":
+        # Entregar si no pagado aun, O ya pagado pero aun no entregado
+        if chart.payment_status != "paid" or not chart.delivered:
             chart.payment_status = "paid"
             await db.commit()
-            # BUG7: guard para pdf_path None ya esta en deliver_paid_chart
             try:
                 await flow.deliver_paid_chart(db, chart)
                 logger.info(f"✅ PDF entregado desde /pago-exitoso para chart {chart_id}")
