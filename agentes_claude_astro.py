@@ -1,327 +1,166 @@
 """
-agentes_claude_astro.py
-Agente Claude para generacion de carta astral y tarot egipcio.
-
-CAMBIOS v3.0:
-- BUG4: Signo Maya calculado con Tzolk'in real (maya_sign.py), nunca vacio
-- BUG5: Tarot lee cartas SOLO de tarot_egipcio_tirada_decision.md (tarot_service.py)
-- BUG6: Branding "Un producto de Sincronia Tech Developers S.A.S." en interpretaciones
+agentes_claude_astro.py - Reescrito
+- Campos alineados a las plantillas reales (carta astral, afinidades, tarot, horoscopo)
+- Idioma: responde en el MISMO idioma del usuario (Claude nativo)
+- Tarot: usa el resumen del libro tarot_egipcio_tirada_decision.md (tirada de decision, 1-4 cartas)
+- max_tokens amplio para que el JSON no se trunque; acentos permitidos
 """
-
+import os, json, re, logging
 import anthropic
-import json
-import re
-import os
-import logging
-import unicodedata
-
-from maya_sign import get_maya_sign
-from tarot_service import cargar_biblioteca, construir_contexto_prompt, validar_tirada
 
 logger = logging.getLogger(__name__)
-
 CLAUDE_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-BRANDING = "Un producto de Sincronia Tech Developers S.A.S. - www.sincron-ia.com.mx"
+def _extract_json(raw: str) -> str:
+    t = (raw or "").strip()
+    if "```" in t:
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", t)
+        if m:
+            t = m.group(1).strip()
+    return t.strip()
 
+def _load_book() -> str:
+    try:
+        p = os.path.join(os.path.dirname(__file__), "tarot_egipcio_tirada_decision.md")
+        with open(p, encoding="utf-8") as f:
+            return f.read()[:6500]
+    except Exception:
+        return ""
 
-def _extract_json(raw_text: str) -> str:
-    """Quita fences de markdown (```json ... ```) si Claude los agrega."""
-    text = raw_text.strip()
-    if "```" in text:
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-        if match:
-            text = match.group(1).strip()
-    return text.strip()
-
-
-def _strip_accents(value):
-    """Elimina acentos recursivamente para evitar errores de encoding en PDF."""
-    if isinstance(value, str):
-        nfkd = unicodedata.normalize("NFKD", value)
-        return "".join(c for c in nfkd if not unicodedata.combining(c))
-    if isinstance(value, dict):
-        return {k: _strip_accents(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_strip_accents(v) for v in value]
-    return value
-
+def _lang_instr(lang: str) -> str:
+    return ("Responde EXCLUSIVAMENTE en ingles." if lang == "en"
+            else "Responde EXCLUSIVAMENTE en espanol.")
 
 class AstroAgent:
-    """Agente Claude para lectura astrologica y tarot egipcio."""
-
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
         self.model = "claude-sonnet-4-5"
+        self.book = _load_book()
 
-    # ------------------------------------------------------------------
-    # Carta natal completa (con hora y lugar)
-    # ------------------------------------------------------------------
+    def _chart_prompt(self, birth_date, birth_time, birth_place, gender, lang):
+        return f"""Eres Morgania, experta en astrologia ancestral. {_lang_instr(lang)}
 
-    async def generate_natal_chart_complete(
-        self,
-        birth_date: str,
-        birth_time: str,
-        birth_location: str = None,
-        questions: list = None,
-    ) -> dict:
-        """
-        Genera carta natal completa.
-        birth_date:     "1990-03-15"
-        birth_time:     "14:30"
-        birth_location: "Ciudad de Mexico, Mexico" (opcional)
-        questions:      lista de hasta 5 preguntas para tirada de tarot
-        """
-        # BUG4: calcular signo maya con algoritmo real
-        maya_sign = get_maya_sign(birth_date)
+DATOS:
+Fecha: {birth_date}
+Hora: {birth_time or 'Desconocida'}
+Lugar: {birth_place or 'No especificado'}
+Genero: {gender or 'No especificado'}
 
-        # BUG5: contexto de cartas reales para Claude
-        tarot_contexto = construir_contexto_prompt() if questions else ""
+Devuelve SOLO JSON valido (sin markdown, sin texto extra). Estructura EXACTA:
+{{
+ "zodiac_western": "Signo occidental (una palabra, ej: Aries) + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_chinese": "Signo chino + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_celtic": "Signo celta + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_mayan": "Signo maya + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "zodiac_egyptian": "Signo egipcio + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "ascendente": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "descendente": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "medio_cielo": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "fondo_cielo": "Signo + descripcion (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
+  "planetary_positions": {{
+    "Sol": "Signo Casa", "Luna": "Signo Casa", "Mercurio": "Signo Casa",
+    "Venus": "Signo Casa", "Marte": "Signo Casa", "Jupiter": "Signo Casa",
+    "Saturno": "Signo Casa", "Urano": "Signo Casa", "Neptuno": "Signo Casa",
+    "Pluton": "Signo Casa"
+  }},
+  "afinidad_polaridad": "5-6 lineas: signos de polaridad afin y opuesta",
+  "afinidad_amistad": "5-6 lineas: con que signos hace mejor amistad",
+  "afinidad_fisica": "5-6 lineas: afinidad fisica / atraccion",
+  "afinidad_intelectual": "5-6 lineas: afinidad intelectual",
+  "horoscopo": {{
+    "amor": "5-6 lineas de amor y relaciones para esta semana",
+    "trabajo": "5-6 lineas de trabajo y carrera",
+    "dinero": "5-6 lineas de dinero y finanzas",
+    "salud": "5-6 lineas de salud y bienestar",
+    "dia_suerte": "un dia de la semana",
+    "color_suerte": "un color",
+    "numero_suerte": "un numero"
+  }}
+}}
 
-        preguntas_str = ""
-        if questions:
-            preguntas_str = "\n\nPREGUNTAS TAROT (responde Si/No con interpretacion):\n"
-            preguntas_str += "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions[:5]))
+REGLAS (CRITICO - respeta el limite de caracteres de cada campo):
+- CAMPO ESTRECHO (signos zodiac_*, ascendente/descendente/medio_cielo/fondo_cielo
+  y todas las afinidades): MAXIMO 190 caracteres reales contando espacios. Es poco
+  espacio: escribe 2-3 frases cortas y COMPLETAS. NO lo excedas.
+- Los campos de horoscopo (amor/trabajo/dinero/salud): hasta 450 caracteres.
+- REGLA DE ORO: cada texto debe CERRAR con punto final y NUNCA quedar a media frase.
+  Antes de terminar cuenta los caracteres; si te acercas al limite, cierra la idea ya.
+- Si la hora es Desconocida, calcula el ascendente aproximado y acláralo en pocas palabras.
+- Solo JSON, sin comentarios."""
 
-        tarot_field = ""
-        if preguntas_str:
-            tarot_field = """,
-  "tarot_readings": [
-    {
-      "pregunta": "pregunta 1 exacta",
-      "card": "Nombre carta EXACTO de la biblioteca oficial",
-      "numero_carta": 0,
-      "answer": "Si o No",
-      "interpretation": "Interpretacion 3-4 lineas basada en simbolismo egipcio"
-    }
-  ]"""
-
-        prompt = (
-            "Eres un experto en astrologia y tarot. Genera una carta natal completa.\n\n"
-            f"FECHA: {birth_date}\n"
-            f"HORA: {birth_time}\n"
-            f"LUGAR: {birth_location or 'Desconocido'}\n"
-            f"SIGNO MAYA (ya calculado, usa este valor exacto): {maya_sign}\n\n"
-            f"{tarot_contexto}\n\n"
-            "Responde SOLO con JSON valido, sin texto extra ni markdown:\n"
-            "{\n"
-            '  "zodiac_western": "Signo occidental",\n'
-            '  "zodiac_chinese": "Signo chino",\n'
-            '  "zodiac_celtic": "Arbol celta",\n'
-            f'  "zodiac_mayan": "{maya_sign}",\n'
-            '  "zodiac_egyptian": "Dios/Diosa egipcia",\n'
-            '  "ascending_sign": "Signo ascendente calculado con hora y lugar",\n'
-            '  "moon_sign": "Signo lunar",\n'
-            '  "ascendente": "Descripcion del ascendente (2-3 lineas)",\n'
-            '  "descendente": "Descripcion del descendente (2-3 lineas)",\n'
-            '  "medio_cielo": "Descripcion del Medio Cielo (2-3 lineas)",\n'
-            '  "fondo_cielo": "Descripcion del Fondo del Cielo (2-3 lineas)",\n'
-            '  "planetary_positions": {\n'
-            '    "Sol": "Grado y signo",\n'
-            '    "Luna": "Grado y signo",\n'
-            '    "Mercurio": "Grado y signo",\n'
-            '    "Venus": "Grado y signo",\n'
-            '    "Marte": "Grado y signo",\n'
-            '    "Jupiter": "Grado y signo",\n'
-            '    "Saturno": "Grado y signo"\n'
-            '  },\n'
-            '  "afinidad_polaridad": "Descripcion afinidad polaridad (2-3 lineas)",\n'
-            '  "afinidad_amistad": "Descripcion afinidad amistad (2-3 lineas)",\n'
-            '  "afinidad_fisica": "Descripcion afinidad fisica (2-3 lineas)",\n'
-            '  "afinidad_intelectual": "Descripcion afinidad intelectual (2-3 lineas)",\n'
-            '  "detailed_interpretation": "Analisis detallado 10-12 lineas incluyendo casas astrologicas",\n'
-            '  "horoscopo": {\n'
-            '    "amor": "Lectura amor esta semana (3-4 lineas)",\n'
-            '    "trabajo": "Lectura trabajo esta semana (3-4 lineas)",\n'
-            '    "dinero": "Lectura dinero esta semana (3-4 lineas)",\n'
-            '    "salud": "Lectura salud esta semana (3-4 lineas)",\n'
-            '    "dia_suerte": "Lunes",\n'
-            '    "color_suerte": "Dorado",\n'
-            '    "numero_suerte": "7"\n'
-            "  }"
-            + tarot_field
-            + "\n}\n\n"
-            "REGLAS OBLIGATORIAS:\n"
-            f"- zodiac_mayan DEBE ser exactamente: {maya_sign}\n"
-            "- Las cartas de tarot_readings DEBEN ser nombres EXACTOS de la BIBLIOTECA OFICIAL listada arriba\n"
-            "- Responde SOLO con JSON, sin markdown, sin texto antes ni despues"
-            + (f"\n\n{preguntas_str}" if preguntas_str else "")
-        )
-
+    async def _run_chart(self, birth_date, birth_time=None, birth_place=None, gender=None, lang="es"):
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4000,
-                messages=[{"role": "user", "content": prompt}],
+            resp = self.client.messages.create(
+                model=self.model, max_tokens=8000,
+                messages=[{"role": "user", "content":
+                           self._chart_prompt(birth_date, birth_time, birth_place, gender, lang)}],
             )
-
-            raw_text = _extract_json(response.content[0].text)
-            if not raw_text:
-                raise ValueError("Claude devolvio vacio")
-
-            result = _strip_accents(json.loads(raw_text))
-
-            # BUG4: forzar signo maya correcto (nunca vacio)
-            result["zodiac_mayan"] = _strip_accents(maya_sign)
-
-            # BUG5: validar cartas si hay tirada
-            if questions and "tarot_readings" in result:
-                es_valida, errores = validar_tirada(result["tarot_readings"])
-                if not es_valida:
-                    logger.warning(f"[Tarot] Cartas invalidas: {errores}. Regenerando con fallback.")
-                    result["tarot_readings"] = _tarot_fallback(questions)
-
-            logger.info(f"OK Carta natal completa para {birth_date}")
+            raw = _extract_json(resp.content[0].text)
+            if not raw:
+                raise ValueError("Claude devolvio vacio (chart)")
+            result = json.loads(raw)
+            if birth_place: result["birth_place"] = birth_place
+            if gender: result["birth_gender"] = gender
+            logger.info(f"OK carta natal {birth_date} lang={lang}")
             return result
-
         except Exception as e:
-            logger.error(f"Error generando carta natal completa: {e}", exc_info=True)
+            logger.error(f"Error carta natal: {e}", exc_info=True)
             return None
 
-    # ------------------------------------------------------------------
-    # Carta natal simple (solo fecha)
-    # ------------------------------------------------------------------
+    # Compatibilidad con las firmas que ya usa conversation_flow
+    async def generate_natal_chart_simple(self, birth_date, questions=None,
+                                          birth_place=None, gender=None, lang="es"):
+        return await self._run_chart(birth_date, None, birth_place, gender, lang)
 
-    async def generate_natal_chart_simple(
-        self, birth_date: str, questions: list = None
-    ) -> dict:
-        """
-        Genera carta natal simplificada (solo fecha, sin hora).
-        """
-        # BUG4: calcular signo maya con algoritmo real
-        maya_sign = get_maya_sign(birth_date)
+    async def generate_natal_chart_complete(self, birth_date, birth_time,
+                                            birth_location=None, questions=None,
+                                            gender=None, lang="es"):
+        return await self._run_chart(birth_date, birth_time, birth_location, gender, lang)
 
-        # BUG5: contexto de cartas reales para Claude
-        tarot_contexto = construir_contexto_prompt() if questions else ""
+    async def generate_tarot_reading(self, questions: list, lang: str = "es") -> dict:
+        qs = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
+        book = f"\n\nRESUMEN DEL METODO (usalo como referencia real):\n{self.book}\n" if self.book else ""
+        prompt = f"""Eres Morgania, tarotista experta en TAROT EGIPCIO (78 laminas). {_lang_instr(lang)}
+Usa el metodo real de "Tirada de Decision" del Tarot Egipcio.{book}
 
-        preguntas_str = ""
-        if questions:
-            preguntas_str = "\n\nPREGUNTAS TAROT (responde Si/No con interpretacion):\n"
-            preguntas_str += "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions[:5]))
+METODO PARA CADA PREGUNTA DE SI/NO:
+- Saca de 1 a 4 cartas del Tarot Egipcio (varia el numero y las cartas segun la pregunta; NO repitas siempre la misma).
+- El veredicto Si/No surge de CRUZAR las cartas entre si (no de una carta suelta).
+- Considera el contexto (amor, trabajo, salud, dinero) para traducir el simbolo.
 
-        tarot_field = ""
-        if preguntas_str:
-            tarot_field = """,
-  "tarot_readings": [
-    {
-      "pregunta": "pregunta 1 exacta",
-      "card": "Nombre carta EXACTO de la biblioteca oficial",
-      "numero_carta": 0,
-      "answer": "Si o No",
-      "interpretation": "Interpretacion 3-4 lineas basada en simbolismo egipcio"
-    }
-  ]"""
+PREGUNTAS DEL CONSULTANTE:
+{qs}
 
-        prompt = (
-            "Eres un experto en astrologia y tarot. Genera una carta natal.\n\n"
-            f"FECHA: {birth_date}\n"
-            "HORA: Desconocida (usa 12:00 como referencia)\n"
-            f"SIGNO MAYA (ya calculado, usa este valor exacto): {maya_sign}\n\n"
-            f"{tarot_contexto}\n\n"
-            "Responde SOLO con JSON valido, sin texto extra ni markdown:\n"
-            "{\n"
-            '  "zodiac_western": "Signo occidental",\n'
-            '  "zodiac_chinese": "Signo chino",\n'
-            '  "zodiac_celtic": "Arbol celta",\n'
-            f'  "zodiac_mayan": "{maya_sign}",\n'
-            '  "zodiac_egyptian": "Dios/Diosa egipcia",\n'
-            '  "ascending_sign": "Signo ascendente aproximado (hora desconocida)",\n'
-            '  "moon_sign": "Signo lunar",\n'
-            '  "ascendente": "Ascendente aproximado (hora no disponible) (2-3 lineas)",\n'
-            '  "descendente": "Descendente aproximado (2-3 lineas)",\n'
-            '  "medio_cielo": "Medio Cielo aproximado (2-3 lineas)",\n'
-            '  "fondo_cielo": "Fondo del Cielo aproximado (2-3 lineas)",\n'
-            '  "planetary_positions": {\n'
-            '    "Sol": "Grado y signo",\n'
-            '    "Luna": "Signo (hora desconocida, posicion aproximada)",\n'
-            '    "Mercurio": "Grado y signo",\n'
-            '    "Venus": "Grado y signo",\n'
-            '    "Marte": "Grado y signo",\n'
-            '    "Jupiter": "Grado y signo",\n'
-            '    "Saturno": "Grado y signo"\n'
-            '  },\n'
-            '  "afinidad_polaridad": "Descripcion afinidad polaridad (2-3 lineas)",\n'
-            '  "afinidad_amistad": "Descripcion afinidad amistad (2-3 lineas)",\n'
-            '  "afinidad_fisica": "Descripcion afinidad fisica (2-3 lineas)",\n'
-            '  "afinidad_intelectual": "Descripcion afinidad intelectual (2-3 lineas)",\n'
-            '  "interpretation": "Analisis principal 10-12 lineas",\n'
-            '  "horoscopo": {\n'
-            '    "amor": "Lectura amor esta semana (3-4 lineas)",\n'
-            '    "trabajo": "Lectura trabajo esta semana (3-4 lineas)",\n'
-            '    "dinero": "Lectura dinero esta semana (3-4 lineas)",\n'
-            '    "salud": "Lectura salud esta semana (3-4 lineas)",\n'
-            '    "dia_suerte": "Martes",\n'
-            '    "color_suerte": "Azul",\n'
-            '    "numero_suerte": "3"\n'
-            "  }"
-            + tarot_field
-            + "\n}\n\n"
-            "REGLAS OBLIGATORIAS:\n"
-            f"- zodiac_mayan DEBE ser exactamente: {maya_sign}\n"
-            "- Las cartas de tarot_readings DEBEN ser nombres EXACTOS de la BIBLIOTECA OFICIAL listada arriba\n"
-            "- Responde SOLO con JSON, sin markdown, sin texto antes ni despues"
-            + (f"\n\n{preguntas_str}" if preguntas_str else "")
-        )
+Devuelve SOLO JSON valido:
+{{
+  "readings": [
+    {{
+      "question": "texto exacto de la pregunta",
+      "cards": "1 a 4 cartas con su numero, separadas por ' + ' (ej: La Carroza VII + El Loco 0)",
+      "answer": "Si" o "No",
+      "interpretation": "5-6 lineas: que dicen las cartas EN CONJUNTO y por que dan ese Si/No para esta pregunta"
+    }}
+  ],
+  "overall_message": "Cierre mistico de 5-6 lineas que una las respuestas"
+}}
 
+REGLAS:
+- Exactamente {len(questions)} objetos en "readings", en orden.
+- Cada respuesta un Si o No claro; cada tirada con cartas DIFERENTES.
+- interpretation y overall_message: MAXIMO 6 lineas cortas, SE CONCRETO y CIERRA la
+  ultima frase con punto. Nunca dejes una idea a la mitad ni frases inconclusas.
+- Solo JSON."""
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4000,
+            resp = self.client.messages.create(
+                model=self.model, max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}],
             )
-
-            raw_text = _extract_json(response.content[0].text)
-            if not raw_text:
-                raise ValueError("Claude devolvio vacio")
-
-            result = _strip_accents(json.loads(raw_text))
-
-            # BUG4: forzar signo maya correcto
-            result["zodiac_mayan"] = _strip_accents(maya_sign)
-
-            # BUG5: validar cartas si hay tirada
-            if questions and "tarot_readings" in result:
-                es_valida, errores = validar_tirada(result["tarot_readings"])
-                if not es_valida:
-                    logger.warning(f"[Tarot] Cartas invalidas: {errores}. Regenerando con fallback.")
-                    result["tarot_readings"] = _tarot_fallback(questions)
-
-            logger.info(f"OK Carta natal simple para {birth_date}")
+            raw = _extract_json(resp.content[0].text)
+            if not raw:
+                raise ValueError("Claude devolvio vacio (tarot)")
+            result = json.loads(raw)
+            logger.info(f"OK tarot {len(questions)} preguntas lang={lang}")
             return result
-
         except Exception as e:
-            logger.error(f"Error generando carta natal simple: {e}", exc_info=True)
+            logger.error(f"Error tarot: {e}", exc_info=True)
             return None
-
-
-# ------------------------------------------------------------------
-# Fallback de tarot: si Claude devuelve cartas invalidas, usa cartas
-# reales del archivo en posiciones fijas y genera interpretaciones neutrales.
-# ------------------------------------------------------------------
-
-def _tarot_fallback(questions: list) -> list:
-    """
-    Genera una tirada con cartas reales de la biblioteca oficial.
-    Se usa cuando Claude devuelve cartas que no existen en el archivo.
-    """
-    try:
-        biblioteca = cargar_biblioteca()
-        cartas_ordenadas = sorted(biblioteca.values(), key=lambda c: c["numero"])
-        # Usamos 5 cartas distribuidas uniformemente
-        indices = [0, 15, 30, 45, 60]
-        tirada = []
-        for i, pregunta in enumerate(questions[:5]):
-            carta = cartas_ordenadas[indices[i] % len(cartas_ordenadas)]
-            tirada.append({
-                "pregunta": pregunta,
-                "card": carta["nombre"],
-                "numero_carta": carta["numero"],
-                "answer": "Si" if i % 2 == 0 else "No",
-                "interpretation": carta["significado"][:200] + "..."
-                if len(carta["significado"]) > 200
-                else carta["significado"],
-            })
-        return tirada
-    except Exception as e:
-        logger.error(f"Error en fallback tarot: {e}")
-        return []
