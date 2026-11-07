@@ -507,7 +507,7 @@ async def _generate_and_prepare_payment(
 
         # PDF.co: genera en memoria y sube a la nube — retorna URL publica
         logger.info(f"[Flow] Construyendo PDF para {full_name}")
-        pdf_url, cover_used = await build_natal_chart_pdf(
+        pdf_url, cover_used = build_natal_chart_pdf(
             full_name=full_name,
             birth_date=birth_date,
             birth_time=birth_time,
@@ -598,13 +598,13 @@ async def deliver_paid_chart(db: AsyncSession, chart: NatalChart):
         )
         return
 
-    # Guard anti-doble-entrega
+    # Guard anti-doble-entrega (race condition webhook + redirect)
     if chart.delivered:
-        logger.info(f"[Deliver] Chart {chart.id} ya entregado anteriormente, omitiendo.")
+        logger.info(f"[Deliver] Chart {chart.id} ya entregado, omitiendo.")
         return
 
     chart.payment_status = "paid"
-    chart.delivered = True  # marcar ANTES de enviar para bloquear segunda llamada concurrente
+    chart.delivered = True   # marcar ANTES de enviar para bloquear segunda llamada
     await db.commit()
 
     primer_nombre = (chart.full_name or "").split()[0] if chart.full_name else "amig@"
@@ -759,5 +759,7 @@ def _parse_time(text: str):
     try:
         t = datetime.strptime(text, "%H:%M")
         return t.strftime("%H:%M")
+    except ValueError:
+        return None
     except ValueError:
         return None
