@@ -48,7 +48,7 @@ async def create_payment_link(amount_mxn: int, reference_id: str, description: s
     """
     meta = {"natal_chart_id": str(reference_id), "chart_id": str(reference_id)}
 
-    expires_at = int((datetime.utcnow() + timedelta(days=30)).timestamp())
+    expires_at = int((datetime.utcnow() + timedelta(hours=23)).timestamp())
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{
