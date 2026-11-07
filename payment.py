@@ -42,63 +42,31 @@ STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")  # opcional
 
 async def create_payment_link(amount_mxn: int, reference_id: str, description: str) -> str:
     """
-    Crea link de pago persistente (fix Todo listo) sin romper webhook
+    Crea Checkout Session unica por transaccion.
+    PaymentLink fue eliminado: era reutilizable y siempre apuntaba al mismo chart_id.
     reference_id = NatalChart.id
     """
-    # Metadata compatible con webhook viejo y nuevo
     meta = {"natal_chart_id": str(reference_id), "chart_id": str(reference_id)}
 
-    # 1) Intento principal: PaymentLink (no expira) - si tu cuenta Stripe lo permite
-    try:
-        if STRIPE_PRICE_ID:
-            link = stripe.PaymentLink.create(
-                line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
-                metadata=meta,
-                after_completion={"type": "redirect", "redirect": {"url": SUCCESS_URL}},
-            )
-        else:
-            link = stripe.PaymentLink.create(
-                line_items=[{
-                    "price_data": {
-                        "currency": "mxn",
-                        "product_data": {"name": description},
-                        "unit_amount": amount_mxn * 100,
-                    },
-                    "quantity": 1,
-                }],
-                metadata=meta,
-                after_completion={"type": "redirect", "redirect": {"url": f"{SUCCESS_URL}?chart_id={reference_id}"}},
-            )
-        logger.info(f"PaymentLink persistente creado: {link.url} chart {reference_id}")
-        return link.url
-
-    except Exception as e:
-        logger.warning(f"PaymentLink no disponible ({e}), usando Checkout Session 30d: {str(e)[:200]}")
-
-    # 2) Fallback: Checkout Session con expiracion larga (30 dias) - fix del bug original
-    try:
-        expires_at = int((datetime.utcnow() + timedelta(days=30)).timestamp())
-        session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{
-                "price_data": {
-                    "currency": "mxn",
-                    "product_data": {"name": description},
-                    "unit_amount": amount_mxn * 100,
-                },
-                "quantity": 1,
-            }],
-            mode="payment",
-            success_url=f"{SUCCESS_URL}?chart_id={reference_id}&session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=CANCEL_URL,
-            metadata=meta,
-            expires_at=expires_at,
-        )
-        logger.info(f"Checkout Session 30d creada: {session.url} chart {reference_id}")
-        return session.url
-    except Exception as e2:
-        logger.error(f"Error creando session fallback: {e2}")
-        raise
+    expires_at = int((datetime.utcnow() + timedelta(days=30)).timestamp())
+    session = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{
+            "price_data": {
+                "currency": "mxn",
+                "product_data": {"name": description},
+                "unit_amount": amount_mxn * 100,
+            },
+            "quantity": 1,
+        }],
+        mode="payment",
+        success_url=f"{SUCCESS_URL}?chart_id={reference_id}&session_id={{CHECKOUT_SESSION_ID}}",
+        cancel_url=CANCEL_URL,
+        metadata=meta,
+        expires_at=expires_at,
+    )
+    logger.info(f"Checkout Session creada: {session.url} chart {reference_id}")
+    return session.url
 
 async def regenerate_payment_link_for_chart(chart_id: int, full_name: str, amount_mxn: int = 49) -> str:
     """Para boton Ya pague / Reenviar - genera link nuevo que no expira"""
