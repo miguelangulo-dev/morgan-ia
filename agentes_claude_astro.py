@@ -19,13 +19,34 @@ def _extract_json(raw: str) -> str:
             t = m.group(1).strip()
     return t.strip()
 
+TAROT_DIR = os.path.join(os.path.dirname(__file__), "TarotEgipcio")
+
 def _load_book() -> str:
-    try:
-        p = os.path.join(os.path.dirname(__file__), "tarot_egipcio_tirada_decision.md")
-        with open(p, encoding="utf-8") as f:
-            return f.read()[:6500]
-    except Exception:
+    """Lee COMPLETOS todos los .md/.txt de TarotEgipcio/ (sin recortar)."""
+    textos = []
+    if os.path.isdir(TAROT_DIR):
+        for name in sorted(os.listdir(TAROT_DIR)):
+            if name.lower().endswith((".md", ".txt")):
+                try:
+                    with open(os.path.join(TAROT_DIR, name), encoding="utf-8") as f:
+                        textos.append(f"### {name}\n{f.read()}")
+                except Exception as e:
+                    logger.error(f"No pude leer {name}: {e}")
+    if not textos:
+        logger.error(f"Biblioteca TarotEgipcio/ vacia o no existe: {TAROT_DIR}")
         return ""
+    logger.info(f"Biblioteca TarotEgipcio cargada: {len(textos)} archivo(s)")
+    return "\n\n".join(textos)
+
+def _detect_lang(text: str, default: str = "es") -> str:
+    t = f" {re.sub(r'[^a-zA-Záéíóúñü ]', ' ', (text or '').lower())} "
+    en = sum(w in t for w in [" the "," will "," should "," my "," is "," am "," are "," do ",
+                              " does "," can "," get "," with "," love "," job "," what "," when "])
+    es = sum(w in t for w in [" el "," la "," los "," las "," que "," mi "," es "," voy "," debo ",
+                              " puedo "," con "," amor "," trabajo "," cuando "," va "," me "])
+    if en > es: return "en"
+    if es > en: return "es"
+    return default
 
 def _lang_instr(lang: str) -> str:
     return ("Responde EXCLUSIVAMENTE en ingles." if lang == "en"
@@ -118,8 +139,11 @@ REGLAS (CRITICO - respeta el limite de caracteres de cada campo):
         return await self._run_chart(birth_date, birth_time, birth_location, gender, lang)
 
     async def generate_tarot_reading(self, questions: list, lang: str = "es") -> dict:
+        lang = _detect_lang(" ".join(questions), default=lang)
         qs = "\n".join([f"{i+1}. {q}" for i, q in enumerate(questions)])
-        book = f"\n\nRESUMEN DEL METODO (usalo como referencia real):\n{self.book}\n" if self.book else ""
+        book = (f"\n\nBIBLIOTECA TAROT EGIPCIO (UNICA fuente valida; usa SOLO las cartas, "
+                f"numeros y significados de esta lista, NO uses Marsella ni Rider-Waite):\n{self.book}\n"
+                if self.book else "")
         prompt = f"""Eres Morgania, tarotista experta en TAROT EGIPCIO (78 laminas). {_lang_instr(lang)}
 Usa el metodo real de "Tirada de Decision" del Tarot Egipcio.{book}
 
@@ -136,7 +160,7 @@ Devuelve SOLO JSON valido:
   "readings": [
     {{
       "question": "texto exacto de la pregunta",
-      "cards": "1 a 4 cartas con su numero, separadas por ' + ' (ej: La Carroza VII + El Loco 0)",
+      "cards": "1 a 4 cartas con su numero, separadas por ' + ' (ej: El Triunfo 7 + La Resurreccion 20)",
       "answer": "Si" o "No",
       "interpretation": "5-6 lineas: que dicen las cartas EN CONJUNTO y por que dan ese Si/No para esta pregunta"
     }}
