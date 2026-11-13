@@ -32,8 +32,15 @@ def _load_book() -> str:
                         textos.append(f"### {name}\n{f.read()}")
                 except Exception as e:
                     logger.error(f"No pude leer {name}: {e}")
+    if not textos:  # Sin carpeta: usa el .md de la raiz
+        raiz = os.path.join(os.path.dirname(__file__), "tarot_egipcio_tirada_decision.md")
+        try:
+            with open(raiz, encoding="utf-8") as f:
+                textos.append(f.read())
+        except Exception as e:
+            logger.error(f"No pude leer {raiz}: {e}")
     if not textos:
-        logger.error(f"Biblioteca TarotEgipcio/ vacia o no existe: {TAROT_DIR}")
+        logger.error("Biblioteca Tarot Egipcio no encontrada (ni carpeta ni raiz)")
         return ""
     logger.info(f"Biblioteca TarotEgipcio cargada: {len(textos)} archivo(s)")
     return "\n\n".join(textos)
