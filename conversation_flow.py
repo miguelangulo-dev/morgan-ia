@@ -27,12 +27,14 @@ TERMS_URL = "www.sincron-ia.com.mx"
 # ---------- Textos fijos ES/EN ----------
 MSG = {
     "es": {
-        "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgania, guardiana de los velos del destino.",
+      "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgania, guardiana de los velos del destino.",
         "offer": ("Tu Lectura Completa por ${p} MXN\n\nTe entrego:\n- Tu Carta Astral completa\n"
                   "- Afinidades zodiacales\n- Tu signo Celta, Maya, Chino y Egipcio\n"
                   "- Posicion de los planetas el dia que naciste\n- Horoscopo semanal\n"
                   "- 5 preguntas al destino con tirada de tarot (Si/No + carta)\n\n"
-                  "Pagas ${p} MXN solo cuando todo este listo.\n\nAceptas abrir tu destino?"),
+                  "Pagas ${p} MXN solo cuando todo este listo.\n\n"
+                  "Al abrir tu destino aceptas nuestros Terminos y el uso de tus datos personales unicamente para generar tu lectura (www.sincron-ia.com.mx).\n\n"
+                  "Aceptas abrir tu destino?"),
         "b_yes": "Si, abrir mi destino", "b_no": "No por ahora", "choose": "Elige tu camino:",
         "later": "Entiendo... las estrellas esperaran. Escribe 'hola' cuando estes list@.",
         "ask_name": "Para comenzar, dime tu nombre completo.",
