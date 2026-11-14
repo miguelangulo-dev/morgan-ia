@@ -55,6 +55,80 @@ def _detect_lang(text: str, default: str = "es") -> str:
     if es > en: return "es"
     return default
 
+# ---------- Efemerides Suizas (gratis, modo Moshier: sin archivos .se1) ----------
+_SIGNOS = {"es": ["Aries","Tauro","Geminis","Cancer","Leo","Virgo","Libra","Escorpio",
+                  "Sagitario","Capricornio","Acuario","Piscis"],
+           "en": ["Aries","Taurus","Gemini","Cancer","Leo","Virgo","Libra","Scorpio",
+                  "Sagittarius","Capricorn","Aquarius","Pisces"]}
+_PLANETAS = [("Sol","Sun",0),("Luna","Moon",1),("Mercurio","Mercury",2),("Venus","Venus",3),
+             ("Marte","Mars",4),("Jupiter","Jupiter",5),("Saturno","Saturn",6),
+             ("Urano","Uranus",7),("Neptuno","Neptune",8),("Pluton","Pluto",9)]
+
+def _geo(place):
+    """Ciudad -> (lat, lon, zona horaria). None si no se encuentra."""
+    if not place:
+        return None
+    try:
+        from geopy.geocoders import Nominatim
+        from tzfpy import get_tz
+        loc = Nominatim(user_agent="morgan-ia-bot").geocode(place, timeout=10)
+        if loc:
+            return loc.latitude, loc.longitude, get_tz(loc.longitude, loc.latitude)
+    except Exception as e:
+        logger.warning(f"Geocoding fallo para '{place}': {e}")
+    return None
+
+def _efemerides(birth_date, birth_time, birth_place, lang="es"):
+    """Calcula posiciones reales. birth_date 'DD/MM/AAAA', birth_time 'HH:MM' o None.
+    Devuelve dict o None si algo falla (el bot sigue funcionando sin esto)."""
+    try:
+        import swisseph as swe
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        d, m, y = [int(x) for x in birth_date.split("/")]
+        h, mi = [int(x) for x in birth_time.split(":")] if birth_time else (12, 0)
+        geo = _geo(birth_place)
+        tz = (geo[2] if geo and geo[2] else "America/Mexico_City")
+        utc = datetime(y, m, d, h, mi, tzinfo=ZoneInfo(tz)).astimezone(ZoneInfo("UTC"))
+        jd = swe.julday(utc.year, utc.month, utc.day, utc.hour + utc.minute / 60)
+        sg = _SIGNOS.get(lang, _SIGNOS["es"])
+        sign = lambda lon: sg[int(lon // 30) % 12]
+        casa = "House" if lang == "en" else "Casa"
+
+        cusps = None
+        out = {}
+        wheel = {"planets": {}, "asc": None, "mc": None, "cusps": None}
+        if birth_time and geo:
+            cusps, ascmc = swe.houses(jd, geo[0], geo[1], b"P")
+            wheel.update(asc=ascmc[0], mc=ascmc[1], cusps=list(cusps))
+            out["ascendente"] = sign(ascmc[0])
+            out["descendente"] = sign(ascmc[0] + 180)
+            out["medio_cielo"] = sign(ascmc[1])
+            out["fondo_cielo"] = sign(ascmc[1] + 180)
+
+        def _house(lon):
+            for i in range(12):
+                a, b = cusps[i], cusps[(i + 1) % 12]
+                if (a <= lon < b) if a < b else (lon >= a or lon < b):
+                    return i + 1
+            return None
+
+        planets = {}
+        for es_n, en_n, pid in _PLANETAS:
+            lon = swe.calc_ut(jd, pid, swe.FLG_MOSEPH)[0][0]
+            wheel["planets"][es_n] = lon
+            txt = sign(lon)
+            if cusps:
+                txt += f" {casa} {_house(lon)}"
+            planets[en_n if lang == "en" else es_n] = txt
+        out["planetary_positions"] = planets
+        out["wheel"] = wheel  # longitudes para dibujar la rueda (no va a Claude)
+        logger.info(f"Efemerides OK {birth_date} {birth_time} tz={tz} casas={bool(cusps)}")
+        return out
+    except Exception as e:
+        logger.error(f"Efemerides fallo: {e}", exc_info=True)
+        return None
+
 def _lang_instr(lang: str) -> str:
     return ("Responde EXCLUSIVAMENTE en ingles." if lang == "en"
             else "Responde EXCLUSIVAMENTE en espanol.")
@@ -65,7 +139,13 @@ class AstroAgent:
         self.model = "claude-sonnet-4-5"
         self.book = _load_book()
 
-    def _chart_prompt(self, birth_date, birth_time, birth_place, gender, lang):
+    def _chart_prompt(self, birth_date, birth_time, birth_place, gender, lang, eph=None):
+        eph_txt = ""
+        if eph:
+            eph_txt = ("\nPOSICIONES REALES (Efemerides Suizas). Son OBLIGATORIAS: usa EXACTAMENTE "
+                       "estos signos; zodiac_western = signo del Sol:\n"
+                       + json.dumps({k: v for k, v in eph.items() if k != "wheel"},
+                                    ensure_ascii=False) + "\n")
         return f"""Eres Morgania, experta en astrologia ancestral. {_lang_instr(lang)}
 
 DATOS:
@@ -73,7 +153,7 @@ Fecha: {birth_date}
 Hora: {birth_time or 'Desconocida'}
 Lugar: {birth_place or 'No especificado'}
 Genero: {gender or 'No especificado'}
-
+{eph_txt}
 Devuelve SOLO JSON valido (sin markdown, sin texto extra). Estructura EXACTA:
 {{
  "zodiac_western": "Signo occidental (una palabra, ej: Aries) + significado (CAMPO ESTRECHO: max 190 caracteres, cierra con punto)",
@@ -118,15 +198,19 @@ REGLAS (CRITICO - respeta el limite de caracteres de cada campo):
 
     async def _run_chart(self, birth_date, birth_time=None, birth_place=None, gender=None, lang="es"):
         try:
+            eph = _efemerides(birth_date, birth_time, birth_place, lang)
             resp = self.client.messages.create(
                 model=self.model, max_tokens=8000,
                 messages=[{"role": "user", "content":
-                           self._chart_prompt(birth_date, birth_time, birth_place, gender, lang)}],
+                           self._chart_prompt(birth_date, birth_time, birth_place, gender, lang, eph)}],
             )
             raw = _extract_json(resp.content[0].text)
             if not raw:
                 raise ValueError("Claude devolvio vacio (chart)")
             result = json.loads(raw)
+            if eph:  # Planetas: siempre los calculados, no los de Claude
+                result["planetary_positions"] = eph["planetary_positions"]
+                result["wheel"] = eph["wheel"]
             if birth_place: result["birth_place"] = birth_place
             if gender: result["birth_gender"] = gender
             logger.info(f"OK carta natal {birth_date} lang={lang}")

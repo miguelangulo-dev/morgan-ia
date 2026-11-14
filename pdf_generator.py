@@ -1,9 +1,10 @@
 """
-pdf_generator.py - Reescrito v3 (coordenadas ajustadas a las plantillas reales)
+pdf_generator.py - v4 (rueda zodiacal con Efemerides Suizas)
 Canvas 2500x3300. Texto centrado por recuadro (proporciones 0-1).
-Orden: 1) Portada 2) Posicion Planetaria/Carta Astral 3) Afinidades+Signos 4) Tarot 5) Horoscopo
+Orden: 1) Portada 2) Esencia solar (Posicion Planetaria + rueda) 3) Afinidades+Signos
+       4) Tarot egipcio (5 respuestas) 5) Horoscopo
 """
-import os, glob, random, logging, unicodedata
+import os, glob, math, random, logging, unicodedata
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 
@@ -41,6 +42,8 @@ COORDS = {
         "ac": (0.31, 0.685), "dc": (0.69, 0.685),
         "mc": (0.31, 0.830), "ic": (0.69, 0.830),
         "box": 0.30,
+        # Rueda zodiacal: centro (x,y) y radio (proporcion del ancho). AJUSTA AQUI.
+        "rueda": (0.50, 0.290), "r_rueda": 0.20,
     },
     "afinidades": {
         "polaridad": (0.31, 0.207), "amistad": (0.69, 0.207),
@@ -132,6 +135,114 @@ def _open_tpl(name):
         return None
     return Image.open(path).convert("RGB").resize((CANVAS_W, CANVAS_H))
 
+# ---------- Rueda zodiacal ----------
+SIGN_GLYPHS = "\u2648\u2649\u264A\u264B\u264C\u264D\u264E\u264F\u2650\u2651\u2652\u2653"
+PLANET_GLYPHS = {"Sol": "\u2609", "Luna": "\u263D", "Mercurio": "\u263F", "Venus": "\u2640",
+                 "Marte": "\u2642", "Jupiter": "\u2643", "Saturno": "\u2644",
+                 "Urano": "\u2645", "Neptuno": "\u2646", "Pluton": "\u2647"}
+ASPECTS = [(180, 7, (150, 45, 35)), (90, 6, (150, 45, 35)),   # tensos: rojo
+           (120, 6, (40, 90, 140)), (60, 4, (40, 90, 140))]   # armonicos: azul
+SS = 2  # supersampling para lineas suaves
+
+def _draw_wheel(img, wheel, cx_rel, cy_rel, r_rel):
+    """Dibuja la rueda sobre img (RGB). wheel = {'planets':{nombre:lon}, 'asc', 'mc', 'cusps'}."""
+    planets = (wheel or {}).get("planets") or {}
+    if not planets:
+        return
+    W, H = img.size
+    R = int(W * r_rel) * SS
+    pad = int(R * 0.12)
+    size = 2 * (R + pad)
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    c = size // 2
+    asc = wheel.get("asc")
+    base = asc if asc is not None else 0.0  # sin hora: Aries a la izquierda
+
+    def pt(lon, r):
+        t = math.radians(180 + (lon - base))
+        return (c + r * math.cos(t), c - r * math.sin(t))
+
+    def circle(r, w, col):
+        d.ellipse((c - r, c - r, c + r, c + r), outline=col, width=w)
+
+    def text_at(txt, lon, r, font, col):
+        x, y = pt(lon, r)
+        d.text((x, y), txt, fill=col, font=font, anchor="mm")
+
+    r_out, r_zod, r_pl, r_in = R, int(R * 0.84), int(R * 0.70), int(R * 0.56)
+    gold, dark = GOLD + (255,), DARK + (255,)
+
+    # Anillos
+    circle(r_out, 4 * SS // 2 + 2, gold)
+    circle(r_zod, 3, gold)
+    circle(r_in, 3, gold)
+
+    # Signos: divisiones, marcas de grados y glifos
+    f_sign = _font(int(R * 0.085))
+    for i in range(12):
+        d.line((pt(i * 30, r_zod), pt(i * 30, r_out)), fill=gold, width=3)
+        text_at(SIGN_GLYPHS[i], i * 30 + 15, (r_out + r_zod) / 2, f_sign, dark)
+    for deg in range(0, 360, 5):
+        if deg % 30:
+            ln = R * (0.035 if deg % 10 == 0 else 0.02)
+            d.line((pt(deg, r_zod), pt(deg, r_zod + ln)), fill=gold, width=2)
+
+    # Casas (solo con hora y lugar)
+    cusps = wheel.get("cusps")
+    f_house = _font(int(R * 0.045))
+    if cusps and len(cusps) == 12:
+        for i, cu in enumerate(cusps):
+            angular = i in (0, 3, 6, 9)
+            d.line((pt(cu, r_in), pt(cu, r_zod)), fill=dark if angular else gold,
+                   width=5 if angular else 2)
+            nxt = cusps[(i + 1) % 12]
+            mid = cu + ((nxt - cu) % 360) / 2
+            text_at(str(i + 1), mid, r_in + R * 0.05, f_house, gold)
+        f_ax = _font(int(R * 0.05), True)
+        text_at("AC", wheel["asc"], r_out + pad * 0.55, f_ax, dark)
+        if wheel.get("mc") is not None:
+            text_at("MC", wheel["mc"], r_out + pad * 0.55, f_ax, dark)
+
+    # Aspectos (dentro del circulo interior)
+    items = list(planets.items())
+    for a in range(len(items)):
+        for b in range(a + 1, len(items)):
+            diff = abs(items[a][1] - items[b][1]) % 360
+            diff = min(diff, 360 - diff)
+            for ang, orb, col in ASPECTS:
+                if abs(diff - ang) <= orb:
+                    d.line((pt(items[a][1], r_in - 4), pt(items[b][1], r_in - 4)),
+                           fill=col + (200,), width=3)
+                    break
+
+    # Planetas: separa glifos que se enciman (min 8 grados en pantalla)
+    order = sorted(items, key=lambda kv: kv[1])
+    disp = [lon for _, lon in order]
+    for _ in range(30):
+        moved = False
+        for i in range(len(disp)):
+            j = (i + 1) % len(disp)
+            gap = (disp[j] - disp[i]) % 360
+            if 0 <= gap < 8 and len(disp) > 1:
+                push = (8 - gap) / 2
+                disp[i] -= push; disp[j] += push; moved = True
+        if not moved:
+            break
+    f_pl = _font(int(R * 0.075))
+    for (name, lon), dl in zip(order, disp):
+        d.line((pt(lon, r_zod), pt(lon, r_zod - R * 0.04)), fill=dark, width=4)
+        d.line((pt(lon, r_in), pt(lon, r_in + R * 0.025)), fill=dark, width=3)
+        if abs(((dl - lon + 180) % 360) - 180) > 1:
+            d.line((pt(lon, r_zod - R * 0.04), pt(dl, r_pl + R * 0.05)), fill=gold, width=2)
+        text_at(PLANET_GLYPHS.get(name, name[:2]), dl, r_pl, f_pl, dark)
+
+    final = size // SS
+    layer = layer.resize((final, final), Image.LANCZOS)
+    x0 = int(W * cx_rel) - final // 2
+    y0 = int(H * cy_rel) - final // 2
+    img.paste(layer, (x0, y0), layer)
+
 def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     safe = "".join(c for c in (full_name or "cliente") if c.isalnum() or c == " ").strip().replace(" ", "_")
@@ -153,7 +264,7 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
     if cover_path:
         pages.append(Image.open(cover_path).convert("RGB").resize((CANVAS_W, CANVAS_H)))
 
-    # --- PAGINA 2: POSICION PLANETARIA / CARTA ASTRAL ---
+    # --- PAGINA 2: ESENCIA SOLAR (POSICION PLANETARIA + RUEDA) ---
     img = _open_tpl(TPL_CARTA)
     if img:
         d = ImageDraw.Draw(img); W, H = img.size; c = COORDS["carta_astral"]
@@ -162,6 +273,10 @@ def build_natal_chart_pdf(full_name, birth_date, birth_time, reading: dict):
         d.text((int(W*c["datos"][0]), int(H*c["datos"][1])),
                f"{birth_date}   {birth_time or 'Hora N/D'}   {place}",
                fill=DARK, font=f_small, anchor="ra")
+        try:
+            _draw_wheel(img, reading.get("wheel"), *c["rueda"], c["r_rueda"])
+        except Exception as e:
+            logger.error(f"No pude dibujar la rueda: {e}", exc_info=True)
         planets_txt = "   ".join(f"{k}: {v}" for k, v in planets.items())
         _centered(d, planets_txt, *c["planetas"], W, H, f_small, c["box_pl"], 6, GAP_S, GOLD)
         _centered(d, reading.get("ascendente", ""),  *c["ac"], W, H, f_small, c["box"], 6, GAP_S)

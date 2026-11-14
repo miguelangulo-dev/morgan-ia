@@ -16,3 +16,7 @@ apscheduler
 reportlab==4.1.0
 PyMuPDF==1.24.9
 pdfminer.six==20231228
+pyswisseph==2.10.3.2
+geopy==2.5.0
+tzfpy==2.1.2
+tzdata
