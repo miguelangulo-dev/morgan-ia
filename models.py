@@ -86,3 +86,32 @@ class NatalChart(Base):
     payment_status = Column(String(20), default="pending")  # pending, paid
     delivered = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Invoice(Base):
+    """
+    Factura CFDI 4.0 de una carta pagada (tabla nueva: create_all la crea sola).
+    tipo:   nacional (+52 con RFC) | extranjero (XEXX010101000) | global (+52 sin factura)
+    status: pendiente_pac (falta conectar Edifact) | timbrada | error | global
+    """
+    __tablename__ = "invoices"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    chart_id = Column(String, index=True, unique=True)
+    phone_number = Column(String(20), index=True)
+    tipo = Column(String(20))
+    rfc = Column(String(13))
+    nombre = Column(String(300))
+    cp = Column(String(5), nullable=True)
+    regimen = Column(String(3), nullable=True)
+    uso_cfdi = Column(String(4), nullable=True)
+    residencia_fiscal = Column(String(3), nullable=True)
+    total = Column(Float)
+    cfdi_json = Column(JSON, nullable=True)      # datos del CFDI listos para el PAC
+    status = Column(String(20), default="pendiente_pac")
+    uuid_sat = Column(String(40), nullable=True)
+    xml_path = Column(String, nullable=True)
+    pdf_path = Column(String, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    stamped_at = Column(DateTime, nullable=True)

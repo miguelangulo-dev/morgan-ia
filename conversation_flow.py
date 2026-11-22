@@ -16,25 +16,24 @@ from utils_whatsapp import WhatsAppClient
 from agentes_claude_astro import AstroAgent
 from pdf_generator import build_natal_chart_pdf
 from payment import create_payment_link
+import facturacion as fx
 
 logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
 astro = AstroAgent()
-PRICE_MXN = 49
+PRICE_MXN = 179
 ADMIN_KEY = os.getenv("MORGAN_ADMIN_KEY", "634r50fw4R!977$5283266")
 TERMS_URL = "www.sincron-ia.com.mx"
 
 # ---------- Textos fijos ES/EN ----------
 MSG = {
     "es": {
-      "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgania, guardiana de los velos del destino.",
+        "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgania, guardiana de los velos del destino.",
         "offer": ("Tu Lectura Completa por ${p} MXN\n\nTe entrego:\n- Tu Carta Astral completa\n"
                   "- Afinidades zodiacales\n- Tu signo Celta, Maya, Chino y Egipcio\n"
                   "- Posicion de los planetas el dia que naciste\n- Horoscopo semanal\n"
                   "- 5 preguntas al destino con tirada de tarot (Si/No + carta)\n\n"
-                  "Pagas ${p} MXN solo cuando todo este listo.\n\n"
-                  "Al abrir tu destino aceptas nuestros Terminos y el uso de tus datos personales unicamente para generar tu lectura (www.sincron-ia.com.mx).\n\n"
-                  "Aceptas abrir tu destino?"),
+                  "Pagas ${p} MXN solo cuando todo este listo.\n\nAceptas abrir tu destino?"),
         "b_yes": "Si, abrir mi destino", "b_no": "No por ahora", "choose": "Elige tu camino:",
         "later": "Entiendo... las estrellas esperaran. Escribe 'hola' cuando estes list@.",
         "ask_name": "Para comenzar, dime tu nombre completo.",
@@ -63,6 +62,18 @@ MSG = {
         "err": "Las runas se nublaron un momento... Intenta de nuevo escribiendo 'hola'.",
         "delivered": "Aqui esta tu destino completo, {n}. Gracias por confiar en Morgania.",
         "restart": "Escribe 'hola' para comenzar.",
+        "inv_ask": "Requieres factura (CFDI)?",
+        "b_inv_yes": "Si, quiero factura", "b_inv_no": "No, gracias",
+        "inv_rfc": "Escribe tu RFC (12 o 13 caracteres).",
+        "bad_rfc": "Ese RFC no es valido. Revisalo y escribelo de nuevo (ej: PEPJ900315AB1).",
+        "inv_name": ("Escribe tu nombre o razon social EXACTAMENTE como aparece en tu Constancia "
+                     "de Situacion Fiscal (sin 'S.A. de C.V.' ni similares)."),
+        "inv_cp": "Escribe el codigo postal de tu domicilio fiscal (5 digitos).",
+        "bad_cp": "El codigo postal debe tener 5 digitos. Intenta de nuevo.",
+        "inv_reg": "Escribe el numero de tu regimen fiscal:\n{r}",
+        "bad_reg": "No reconozco ese regimen. Escribe solo el numero de 3 digitos de la lista.",
+        "inv_ok": "Listo. Tu factura se esta generando; te la envio aqui en cuanto este timbrada.",
+        "inv_no": "Perfecto. Gracias por confiar en Morgania.",
     },
     "en": {
         "intro1": "It is no coincidence you are here... Your destiny is written in the stars.\nI am Morgania, keeper of the veils of destiny.",
@@ -98,6 +109,17 @@ MSG = {
         "err": "The runes clouded for a moment... Try again by typing 'hi'.",
         "delivered": "Here is your complete destiny, {n}. Thank you for trusting Morgania.",
         "restart": "Type 'hi' to start.",
+        "inv_ask": "Do you need a Mexican tax invoice (CFDI)?",
+        "b_inv_yes": "Yes, I need it", "b_inv_no": "No, thanks",
+        "inv_rfc": "Type your RFC (12 or 13 characters).",
+        "bad_rfc": "That RFC is not valid. Please check it and type it again.",
+        "inv_name": "Type your name or company name EXACTLY as on your Constancia de Situacion Fiscal.",
+        "inv_cp": "Type the zip code of your tax address (5 digits).",
+        "bad_cp": "The zip code must have 5 digits. Try again.",
+        "inv_reg": "Type the number of your tax regime:\n{r}",
+        "bad_reg": "I don't recognize that regime. Type only the 3-digit number from the list.",
+        "inv_ok": "Done. Your invoice is being generated; I'll send it here as soon as it's stamped.",
+        "inv_no": "Perfect. Thank you for trusting Morgania.",
     },
 }
 
@@ -303,8 +325,61 @@ async def handle_incoming_text(db, phone, text):
             await save_state(db, state, step="MENU"); await wa.send_text(phone, T(lang, "restart"))
         return
 
+    # ---------- Factura (solo ladas +52) ----------
+    if step == "AWAITING_INVOICE_Q":
+        chart = await _chart_from_state(db, data)
+        if not chart:
+            await save_state(db, state, step="MENU"); await wa.send_text(phone, T(lang, "restart")); return
+        if text_clean == "factura_si" or _is_affirmative(text_clean):
+            await save_state(db, state, step="AWAITING_INV_RFC")
+            await wa.send_text(phone, T(lang, "inv_rfc"))
+        else:
+            await fx.facturar(db, chart, "global", total=PRICE_MXN)
+            await save_state(db, state, step="COMPLETED")
+            await wa.send_text(phone, T(lang, "inv_no"))
+        return
+
+    if step == "AWAITING_INV_RFC":
+        rfc = fx.validar_rfc(text_clean)
+        if not rfc:
+            await wa.send_text(phone, T(lang, "bad_rfc")); return
+        await save_state(db, state, step="AWAITING_INV_NAME", data_update={"inv_rfc": rfc})
+        await wa.send_text(phone, T(lang, "inv_name")); return
+
+    if step == "AWAITING_INV_NAME":
+        if len(text_clean) < 3:
+            await wa.send_text(phone, T(lang, "inv_name")); return
+        await save_state(db, state, step="AWAITING_INV_CP", data_update={"inv_nombre": text_clean})
+        await wa.send_text(phone, T(lang, "inv_cp")); return
+
+    if step == "AWAITING_INV_CP":
+        cp = fx.validar_cp(text_clean)
+        if not cp:
+            await wa.send_text(phone, T(lang, "bad_cp")); return
+        await save_state(db, state, step="AWAITING_INV_REG", data_update={"inv_cp": cp})
+        await wa.send_text(phone, T(lang, "inv_reg", r=fx.lista_regimenes())); return
+
+    if step == "AWAITING_INV_REG":
+        reg = fx.validar_regimen(text_clean)
+        if not reg:
+            await wa.send_text(phone, T(lang, "bad_reg")); return
+        chart = await _chart_from_state(db, data)
+        if chart:
+            receptor = fx.receptor_nacional(data.get("inv_rfc"), data.get("inv_nombre"),
+                                            data.get("inv_cp"), reg)
+            await fx.facturar(db, chart, "nacional", receptor=receptor, total=PRICE_MXN)
+        await save_state(db, state, step="COMPLETED")
+        await wa.send_text(phone, T(lang, "inv_ok")); return
+
     # COMPLETED u otros
     await save_state(db, state, step="MENU"); await wa.send_text(phone, T(lang, "restart"))
+
+async def _chart_from_state(db, data):
+    cid = (data or {}).get("chart_id")
+    if not cid:
+        return None
+    r = await db.execute(select(NatalChart).where(NatalChart.id == cid))
+    return r.scalar_one_or_none()
 
 async def handle_button_reply(db, phone, button_id):
     if button_id == "cancelar_compra":
@@ -343,7 +418,8 @@ async def handle_button_reply(db, phone, button_id):
         await wa.send_text(phone, url or T(lang, "restart")); return
     mapping = {"quiero_carta":"si","no_gracias":"no",
                "genero_m":"genero_m","genero_f":"genero_f","genero_x":"genero_x",
-               "acepto_terminos":"acepto_terminos"}
+               "acepto_terminos":"acepto_terminos",
+               "factura_si":"factura_si","factura_no":"factura_no"}
     await handle_incoming_text(db, phone, mapping.get(button_id, button_id))
 
 # Compat: main.py llama handle_button_click en algunas versiones
@@ -414,3 +490,15 @@ async def deliver_paid_chart(db, chart):
         filename="Morgan-IA.pdf")
     chart.delivered = True; await db.commit()
     if st: await save_state(db, st, step="COMPLETED")
+
+    # Factura: +52 pregunta; otras ladas se factura en automatico a XEXX010101000
+    try:
+        if fx.es_mexico(chart.phone_number):
+            if st: await save_state(db, st, step="AWAITING_INVOICE_Q")
+            await wa.send_buttons(chart.phone_number, T(lang, "inv_ask"),
+                buttons=[{"id":"factura_si","title":T(lang,"b_inv_yes")},
+                         {"id":"factura_no","title":T(lang,"b_inv_no")}])
+        else:
+            await fx.facturar(db, chart, "extranjero", total=PRICE_MXN)
+    except Exception as e:
+        logger.error(f"Error en paso de factura: {e}", exc_info=True)
