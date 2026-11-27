@@ -1,18 +1,20 @@
 """
-facturacion.py - CFDI 4.0 para Morgan-IA (PAC: EdifactMx)
+facturacion.py - CFDI 4.0 para Morgan-IA (PAC: CFDI Express API)
 
-PARTE A (lista): arma los datos del CFDI y los guarda en la tabla `invoices`.
-PARTE B (pendiente): timbrar() se conecta cuando Edifact entregue su
-documentacion de API y las credenciales del sandbox. Mientras, las facturas
-quedan con status 'pendiente_pac' y no se pierde ninguna.
+Arma los datos del CFDI, los guarda en la tabla `invoices` y los timbra con
+CFDI Express (https://api.cfdi.express). El CSD vive en el panel de CFDI Express;
+el emisor se busca por RFC. Si el timbrado falla, la factura queda guardada
+con status 'error' o 'pendiente_pac' y no se pierde.
 
 Variables de entorno (Railway):
-  EMISOR_RFC, EMISOR_NOMBRE (razon social SIN "S.A.S."), EMISOR_REGIMEN=601, EMISOR_CP=38028
+  CFDI_EXPRESS_KEY          sk_test_... (pruebas) o sk_live_... (produccion)
+  EMISOR_RFC                EKU9003173C9 (pruebas) o STD260924HWA (produccion)
+  CFDI_EXPRESS_MERCHANT_ID  opcional; si no esta, se busca por EMISOR_RFC
   SAT_CLAVE_PROD=01010101 (temporal), SAT_CLAVE_UNIDAD=E48, IVA_TASA=0.16
-  EDIFACT_URL, EDIFACT_USER, EDIFACT_PASSWORD           (parte B)
-  CSD_CER_B64, CSD_KEY_B64, CSD_PASSWORD (solo si Edifact pide que sellemos nosotros)
+  EMISOR_NOMBRE, EMISOR_REGIMEN=601, EMISOR_CP=38028 (respaldo si no se lee del emisor)
 """
-import os, re, logging
+import os, re, asyncio, logging
+import httpx
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import select
@@ -141,13 +143,106 @@ def receptor_extranjero(nombre, phone) -> dict:
         r["ResidenciaFiscal"] = pais
     return r
 
-# ---------- PAC (PARTE B) ----------
-async def timbrar(cfdi: dict):
-    """PARTE B: enviar a Edifact y regresar {'uuid','xml','pdf'}.
-    No se programa hasta tener la documentacion oficial (no se inventan endpoints)."""
-    if not os.getenv("EDIFACT_USER"):
-        logger.info("Edifact sin configurar: factura queda pendiente_pac")
-    return None
+# ---------- PAC: CFDI Express ----------
+API_URL = "https://api.cfdi.express"
+_merchant_cache = {}
+
+def _headers(extra=None):
+    h = {"Authorization": f"Bearer {os.getenv('CFDI_EXPRESS_KEY', '')}",
+         "Content-Type": "application/json"}
+    h.update(extra or {})
+    return h
+
+async def _merchant(client):
+    """Devuelve {'id','zip'} del emisor. Usa CFDI_EXPRESS_MERCHANT_ID o busca por EMISOR_RFC."""
+    rfc = os.getenv("EMISOR_RFC", "").upper()
+    if rfc in _merchant_cache:
+        return _merchant_cache[rfc]
+    fixed = os.getenv("CFDI_EXPRESS_MERCHANT_ID")
+    if fixed:
+        r = await client.get(f"{API_URL}/v1/merchants/{fixed}", headers=_headers())
+        m = r.json() if r.status_code == 200 else {"id": fixed}
+    else:
+        r = await client.get(f"{API_URL}/v1/merchants", headers=_headers())
+        r.raise_for_status()
+        body = r.json()
+        items = body.get("data", body) if isinstance(body, dict) else body
+        m = next((x for x in items if str(x.get("rfc", "")).upper() == rfc), None)
+        if not m:
+            raise ValueError(f"No hay emisor con RFC {rfc} en CFDI Express (revisa modo Test/Live)")
+    out = {"id": m.get("id"), "zip": m.get("zip") or LUGAR_EXPEDICION}
+    _merchant_cache[rfc] = out
+    logger.info(f"Emisor CFDI Express: {out['id']} RFC {rfc}")
+    return out
+
+def _request_body(merchant, receptor: dict, total) -> dict:
+    """Convierte nuestro receptor al formato de POST /v1/invoices."""
+    rec = {"rfc": receptor["Rfc"], "name": receptor["Nombre"],
+           "zip": receptor["DomicilioFiscalReceptor"],
+           "regimenFiscal": receptor["RegimenFiscalReceptor"]}
+    if receptor["Rfc"] == RFC_EXTRANJERO:
+        rec["zip"] = merchant["zip"]  # con XEXX va el CP de expedicion del emisor
+    if receptor.get("ResidenciaFiscal"):
+        rec["residenciaFiscal"] = receptor["ResidenciaFiscal"]
+    return {
+        "merchantId": merchant["id"],
+        "metodoPago": "PUE", "formaPago": "04",   # tarjeta (Stripe), una exhibicion
+        "usoCfdi": receptor["UsoCFDI"], "currency": "MXN",
+        "receiver": rec,
+        "items": [{"productCode": CLAVE_PROD, "unitCode": CLAVE_UNIDAD, "unit": "Servicio",
+                   "description": DESCRIPCION, "quantity": 1,
+                   "unitPrice": float(_d(total)), "ivaRate": float(IVA_TASA)}],
+        "pricesIncludeTax": True,
+    }
+
+async def timbrar(receptor: dict, total, idem_key: str):
+    """Timbra y regresa {'ok':True,'id','uuid','pdf','xml','body'} o {'ok':False,'error','retry'}.
+    idem_key evita timbrar dos veces la misma carta."""
+    if not os.getenv("CFDI_EXPRESS_KEY"):
+        logger.info("CFDI_EXPRESS_KEY vacia: factura queda pendiente_pac")
+        return {"ok": False, "error": "CFDI_EXPRESS_KEY vacia", "retry": True}
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            merchant = await _merchant(c)
+            body = _request_body(merchant, receptor, total)
+            r = await c.post(f"{API_URL}/v1/invoices", json=body,
+                             headers=_headers({"Idempotency-Key": idem_key}))
+            if r.status_code not in (200, 201, 202):
+                err = r.json() if "json" in r.headers.get("content-type", "") else {"detail": r.text}
+                code = err.get("code", r.status_code)
+                logger.error(f"CFDI Express {r.status_code} {code}: {str(err)[:800]}")
+                return {"ok": False, "body": body, "error": f"{code}: {str(err)[:900]}",
+                        "retry": r.status_code in (402, 409, 429, 500, 503)}
+            inv = r.json()
+            # Espera a que esten listos el timbre y los archivos (max ~40 s)
+            for _ in range(20):
+                if inv.get("status") == "stamped" and (inv.get("files") or {}).get("status") == "ready" \
+                        and (inv.get("files") or {}).get("pdfUrl"):
+                    break
+                if (inv.get("files") or {}).get("status") == "failed":
+                    break
+                await asyncio.sleep(2)
+                g = await c.get(f"{API_URL}/v1/invoices/{inv['id']}", headers=_headers())
+                if g.status_code == 200:
+                    inv = g.json()
+            files = inv.get("files") or {}
+            if inv.get("status") != "stamped":
+                return {"ok": False, "body": body, "id": inv.get("id"),
+                        "error": f"status {inv.get('status')}", "retry": True}
+            return {"ok": True, "body": body, "id": inv["id"], "uuid": inv.get("uuid"),
+                    "pdf": files.get("pdfUrl"), "xml": files.get("xmlUrl")}
+    except Exception as e:
+        logger.error(f"Error timbrando: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)[:900], "retry": True}
+
+async def descargar(url: str, destino: str):
+    """Baja un archivo (las URLs de CFDI Express caducan en 15 min)."""
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as c:
+        r = await c.get(url)
+        r.raise_for_status()
+        with open(destino, "wb") as f:
+            f.write(r.content)
+    return destino
 
 # ---------- Orquestador ----------
 async def facturar(db, chart, tipo: str, receptor: dict = None, total=None):
@@ -156,6 +251,8 @@ async def facturar(db, chart, tipo: str, receptor: dict = None, total=None):
     try:
         r = await db.execute(select(Invoice).where(Invoice.chart_id == chart.id))
         inv = r.scalar_one_or_none()
+        if inv and inv.tipo == "global" and tipo == "nacional":
+            await db.delete(inv); await db.commit(); inv = None  # cambio de opinion: si quiere factura
         if inv:
             return inv
         if tipo == "extranjero":
@@ -174,12 +271,17 @@ async def facturar(db, chart, tipo: str, receptor: dict = None, total=None):
         logger.info(f"Factura {tipo} registrada chart={chart.id} status={inv.status}")
 
         if cfdi:
-            res = await timbrar(cfdi)
-            if res:
+            res = await timbrar(receptor, total, idem_key=f"morgan-{inv.id}")
+            if res.get("body"):
+                inv.cfdi_json = {**cfdi, "_request": res["body"], "_pac_id": res.get("id")}
+            if res.get("ok"):
                 inv.status, inv.uuid_sat = "timbrada", res.get("uuid")
-                inv.xml_path, inv.pdf_path = res.get("xml"), res.get("pdf")
                 inv.stamped_at = datetime.utcnow()
-                await db.commit()
+                inv._files = {"pdf": res.get("pdf"), "xml": res.get("xml")}  # caducan en 15 min
+            else:
+                inv.status = "pendiente_pac" if res.get("retry") else "error"
+                inv.error = res.get("error")
+            await db.commit()
         return inv
     except Exception as e:
         logger.error(f"Error facturando chart {getattr(chart, 'id', '?')}: {e}", exc_info=True)
