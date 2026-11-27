@@ -21,108 +21,108 @@ import facturacion as fx
 logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
 astro = AstroAgent()
-PRICE_MXN = 179
+PRICE_MXN = 89
 ADMIN_KEY = os.getenv("MORGAN_ADMIN_KEY", "634r50fw4R!977$5283266")
 TERMS_URL = "www.sincron-ia.com.mx"
 
 # ---------- Textos fijos ES/EN ----------
 MSG = {
     "es": {
-        "intro1": "No es casualidad que llegaras aqui... El destino ya esta escrito en las estrellas.\nSoy Morgania, guardiana de los velos del destino.",
-        "offer": ("Tu Lectura Completa por ${p} MXN\n\nTe entrego:\n- Tu Carta Astral completa\n"
+        "intro1": "🍀 No es casualidad que llegaras aqui... El destino 📜 ya esta escrito en las estrellas💫.\nSoy Morgania 🧙🏻‍♀️, guardiana de los velos del destino 🔮.",
+        "offer": ("Tu Lectura Completa por ${p} MXN\n\nTe entrego:\n- 🌙Tu Carta Astral completa\n"
                   "- Afinidades zodiacales\n- Tu signo Celta, Maya, Chino y Egipcio\n"
-                  "- Posicion de los planetas el dia que naciste\n- Horoscopo semanal\n"
-                  "- 5 preguntas al destino con tirada de tarot (Si/No + carta)\n\n"
+                  "- 🌎 Posicion de los planetas 🪐 el dia que naciste\n- Horoscopo semanal\n"
+                  "- 5 preguntas al destino 📜 con tirada de tarot 🧿 (Si/No + carta)\n\n"
                   "Pagas ${p} MXN solo cuando todo este listo.\n\nAceptas abrir tu destino?"),
         "b_yes": "Si, abrir mi destino", "b_no": "No por ahora", "choose": "Elige tu camino:",
-        "later": "Entiendo... las estrellas esperaran. Escribe 'hola' cuando estes list@.",
+        "later": "Entiendo... las estrellas esperaran✨. Escribe 'hola' cuando estes list@.",
         "ask_name": "Para comenzar, dime tu nombre completo.",
         "short_name": "Ese nombre parece muy corto. Me compartes tu nombre completo?",
         "ask_date": "Gracias, {n}\n\nCual es tu fecha de nacimiento? (Ej: 15/03/1990)",
         "bad_date": "No pude leer esa fecha. Usa DD/MM/AAAA, ej: 15/03/1990",
-        "ask_time": "Y a que hora naciste? (Ej: 14:30)\nSi no la sabes, escribe 'no se'.",
+        "ask_time": "Y a que hora naciste? ⏳ (Ej: 14:30)\nSi no la sabes, escribe 'no se'.",
         "bad_time": "No pude leer esa hora. Usa HH:MM (24h), ej: 14:30, o escribe 'no se'.",
-        "ask_place": "En que ciudad naciste? (Ej: CDMX, Mexico)\nSi no lo sabes, escribe 'no se'.",
+        "ask_place": "En que ciudad naciste? 📌 (Ej: CDMX, Mexico)\nSi no lo sabes, escribe 'no se'.",
         "ask_gender": "Como te identificas?",
         "g_m": "Masculino", "g_f": "Femenino", "g_x": "Prefiero no decir",
-        "ask_q1": ("Ahora la parte sagrada. Puedes hacer 5 preguntas al destino; te respondo Si/No "
+        "ask_q1": ("Ahora la parte sagrada 🔮. Puedes hacer 5 preguntas a tu destino 📜; te respondo Si/No "
                    "con la carta que salio y su simbologia.\n\nPregunta 1 de 5:"),
-        "next_q": "Anotada en las runas.\n\nPregunta {i} de 5:",
+        "next_q": "🕯️ Tu pregunta ha sido anotada en las runas 📝 y enviada a los arcanos ⚱️.\n\nPregunta {i} de 5:",
         "short_q": "Formulala un poco mas completa. Pregunta {i}?",
-        "terms_body": f"He leido y acepto los terminos y condiciones de {TERMS_URL}",
+        "terms_body": f"He leido y acepto los terminos y condiciones de 📃 {TERMS_URL}",
         "b_accept": "He leido y acepto", "b_cancel": "Cancelar",
         "terms_need": "Necesito que aceptes los terminos para continuar. Escribe 'hola' para reiniciar.",
-        "generating": ("Gracias. Sello y guardo tus 5 preguntas en el circulo de proteccion.\n"
-                       "Generando tu lectura completa... dame un momento, esto lleva un poco de magia."),
-        "sealed": ("Tu destino esta sellado, {n}.\n\nEres {w} en occidente.\n"
+        "generating": ("Gracias. Sello y guardo tus 5 preguntas en el circulo de proteccion 🧿, dejemos que los arcanos hagan su trabajo 📿.\n"
+                       "Generando tu lectura completa... ✨ dame un momento, esto lleva un poco de magia 🔮."),
+        "sealed": ("Tu destino esta sellado 📜, {n}.\n\nEres {w} en occidente.\n"
                    "Tus 5 respuestas de tarot ya estan en el PDF.\n\n"
                    "Para recibir tu PDF completo, paga ${p} MXN aqui:\n{u}\n\n"
                    "En cuanto se confirme, te lo envio aqui mismo."),
         "cont": "Deseas continuar?", "b_paid": "Ya pague / Reenviar",
-        "err": "Las runas se nublaron un momento... Intenta de nuevo escribiendo 'hola'.",
-        "delivered": "Aqui esta tu destino completo, {n}. Gracias por confiar en Morgania.",
+        "err": "Las runas se nublaron un momento ☁️... Intenta de nuevo escribiendo 'hola'.",
+        "delivered": "Aqui esta tu destino completo 📜, {n}. 🧙🏻‍♀️ Gracias por confiar en Morgania.",
         "restart": "Escribe 'hola' para comenzar.",
-        "inv_ask": "Requieres factura (CFDI)?",
+        "inv_ask": "Requieres factura 📃 (CFDI)?",
         "b_inv_yes": "Si, quiero factura", "b_inv_no": "No, gracias",
         "inv_rfc": "Escribe tu RFC (12 o 13 caracteres).",
         "bad_rfc": "Ese RFC no es valido. Revisalo y escribelo de nuevo (ej: PEPJ900315AB1).",
         "inv_name": ("Escribe tu nombre o razon social EXACTAMENTE como aparece en tu Constancia "
                      "de Situacion Fiscal (sin 'S.A. de C.V.' ni similares)."),
-        "inv_cp": "Escribe el codigo postal de tu domicilio fiscal (5 digitos).",
-        "bad_cp": "El codigo postal debe tener 5 digitos. Intenta de nuevo.",
+        "inv_cp": "📭 Escribe el codigo postal de tu domicilio fiscal (5 digitos).",
+        "bad_cp": "El codigo postal 📭 debe tener 5 digitos. Intenta de nuevo.",
         "inv_reg": "Escribe el numero de tu regimen fiscal:\n{r}",
         "bad_reg": "No reconozco ese regimen. Escribe solo el numero de 3 digitos de la lista.",
-        "inv_ok": "Listo. Tu factura se esta generando; te la envio aqui en cuanto este timbrada.",
-        "inv_no": "Perfecto. Gracias por confiar en Morgania.",
+        "inv_ok": "Listo. Tu factura se esta generando 📃; te la envio aqui en cuanto este timbrada.",
+        "inv_no": "Perfecto. Gracias por confiar en Morgania 🧙🏻‍♀️, un producto de Sincronia Tech Developers.",
         "inv_sent": "Aqui esta tu factura. Folio fiscal: {u}",
         "inv_err": ("No pude timbrar tu factura con esos datos. Revisa que coincidan con tu Constancia "
                     "de Situacion Fiscal y escribe 'factura' para capturarlos de nuevo."),
     },
     "en": {
-        "intro1": "It is no coincidence you are here... Your destiny is written in the stars.\nI am Morgania, keeper of the veils of destiny.",
-        "offer": ("Your Full Reading for ${p} MXN\n\nYou get:\n- Your complete Natal Chart\n"
+        "intro1": "🍀 It is no coincidence you are here... Your destiny 📜 is written in the stars 💫.\nI am Morgania 🧙🏻‍♀️, keeper of the veils of destiny.",
+        "offer": ("Your Full Reading for ${p} MXN\n\nYou get:\n- 🌙 Your complete Natal Chart\n"
                   "- Zodiac affinities\n- Your Celtic, Mayan, Chinese and Egyptian sign\n"
-                  "- Planetary positions on your birth day\n- Weekly horoscope\n"
-                  "- 5 questions to destiny with a tarot spread (Yes/No + card)\n\n"
+                  "- 🌎 Planetary positions 🪐 on your birth day\n- Weekly horoscope\n"
+                  "- 5 questions to your destiny 📜 with a tarot spread 🧿 (Yes/No + card)\n\n"
                   "You pay ${p} MXN only when everything is ready.\n\nDo you accept to open your destiny?"),
         "b_yes": "Yes, open it", "b_no": "Not now", "choose": "Choose your path:",
-        "later": "I understand... the stars will wait. Type 'hi' when you are ready.",
+        "later": "I understand... the stars will wait✨. Type 'hi' when you are ready.",
         "ask_name": "To begin, tell me your full name.",
         "short_name": "That name seems too short. Can you share your full name?",
         "ask_date": "Thank you, {n}\n\nWhat is your date of birth? (e.g. 15/03/1990)",
         "bad_date": "I couldn't read that date. Use DD/MM/YYYY, e.g. 15/03/1990",
-        "ask_time": "And what time were you born? (e.g. 14:30)\nIf you don't know, type 'idk'.",
+        "ask_time": "And what time were you born? ⏳ (e.g. 14:30)\nIf you don't know, type 'idk'.",
         "bad_time": "I couldn't read that time. Use HH:MM (24h), e.g. 14:30, or type 'idk'.",
-        "ask_place": "In which city were you born? (e.g. Washington, DC)\nIf unknown, type 'idk'.",
+        "ask_place": "In which city were you born? 📌 (e.g. Washington, DC)\nIf unknown, type 'idk'.",
         "ask_gender": "How do you identify?",
         "g_m": "Male", "g_f": "Female", "g_x": "Prefer not to say",
-        "ask_q1": ("Now the sacred part. You may ask 5 questions to destiny; I answer Yes/No "
+        "ask_q1": ("Now the sacred part 🔮. You may ask 5 questions to destiny 📜; I answer Yes/No "
                    "with the card drawn and its symbolism.\n\nQuestion 1 of 5:"),
-        "next_q": "Noted in runes.\n\nQuestion {i} of 5:",
+        "next_q": "🕯️ Noted in runes 📝 and sent to the arcana ⚱️.\n\nQuestion {i} of 5:",
         "short_q": "Make it a bit more complete. Question {i}?",
         "terms_body": f"I have read and accept the terms and conditions of {TERMS_URL}",
         "b_accept": "I read and accept", "b_cancel": "Cancel",
         "terms_need": "I need you to accept the terms to continue. Type 'hi' to restart.",
-        "generating": "Thank you. Sealing and storing your 5 questions.\nGenerating your full reading... one moment, this takes a little bit of magic.",
-        "sealed": ("Your destiny is sealed, {n}.\n\nYou are {w} in the western zodiac.\n"
+        "generating": "Thank you. Sealing and storing your 5 questions. Let the arcana do their work 📿.\nGenerating your full reading... one moment, ✨ this takes a little bit of magic 🔮.",
+        "sealed": ("Your destiny is sealed 📜, {n}.\n\nYou are {w} in the western zodiac.\n"
                    "Your 5 tarot answers are in the PDF.\n\n"
                    "To receive your full PDF, pay ${p} MXN here:\n{u}\n\n"
                    "As soon as it's confirmed, I'll send it right here."),
         "cont": "Continue?", "b_paid": "I paid / Resend",
-        "err": "The runes clouded for a moment... Try again by typing 'hi'.",
-        "delivered": "Here is your complete destiny, {n}. Thank you for trusting Morgania.",
+        "err": "The runes clouded for a moment☁️... Try again by typing 'hi'.",
+        "delivered": "Here is your complete destiny 📜, {n}. Thank you for trusting Morgania.",
         "restart": "Type 'hi' to start.",
-        "inv_ask": "Do you need a Mexican tax invoice (CFDI)?",
+        "inv_ask": "Do you need a Mexican tax invoice 📃 (CFDI)?",
         "b_inv_yes": "Yes, I need it", "b_inv_no": "No, thanks",
         "inv_rfc": "Type your RFC (12 or 13 characters).",
         "bad_rfc": "That RFC is not valid. Please check it and type it again.",
         "inv_name": "Type your name or company name EXACTLY as on your Constancia de Situacion Fiscal.",
-        "inv_cp": "Type the zip code of your tax address (5 digits).",
-        "bad_cp": "The zip code must have 5 digits. Try again.",
+        "inv_cp": "📭 Type the zip code of your tax address (5 digits).",
+        "bad_cp": "The zip code 📭 must have 5 digits. Try again.",
         "inv_reg": "Type the number of your tax regime:\n{r}",
         "bad_reg": "I don't recognize that regime. Type only the 3-digit number from the list.",
-        "inv_ok": "Done. Your invoice is being generated; I'll send it here as soon as it's stamped.",
-        "inv_no": "Perfect. Thank you for trusting Morgania.",
+        "inv_ok": "Done. Your invoice is being generated 📃; I'll send it here as soon as it's stamped.",
+        "inv_no": "Perfect. Thank you for trusting Morgania 🧙🏻‍♀️, a product by Sincronia Tech Developers.",
         "inv_sent": "Here is your invoice. Fiscal folio: {u}",
         "inv_err": ("I couldn't stamp your invoice with that data. Check it matches your Constancia "
                     "de Situacion Fiscal and type 'factura' to enter it again."),
