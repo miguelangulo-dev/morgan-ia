@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
 astro = AstroAgent()
 PRICE_MXN = 89
-ADMIN_KEY = os.getenv("MORGAN_ADMIN_KEY", "")  # se configura en Railway
+ADMIN_KEY = os.getenv("MORGANIA_ADMIN_KEY", "")  # se configura en Railway
 TERMS_URL = "www.sincron-ia.com.mx"
 
 # ---------- Textos fijos ES/EN ----------
