@@ -1,12 +1,17 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, JSONResponse, HTMLResponse
 import os
+import asyncio
 import logging
+from datetime import datetime, timedelta
 
+from sqlalchemy import Column, String, DateTime, select, delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from models import Base
+from models import Base, ConversationState, NatalChart
 import conversation_flow as flow
 from payment import handle_stripe_webhook
 
@@ -14,7 +19,7 @@ from payment import handle_stripe_webhook
 # Configuración
 # ============================================================================
 
-VERIFY_TOKEN = "morgania2026"
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "")  # se configura en Railway
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
@@ -27,6 +32,16 @@ app = FastAPI(title="Morgan-ia")
 engine = create_async_engine(DATABASE_URL, echo=False) if DATABASE_URL else None
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False) if engine else None
 
+
+class ProcessedMessage(Base):
+    """IDs de mensajes de WhatsApp ya recibidos (evita procesar reintentos de Meta)."""
+    __tablename__ = "processed_messages"
+    id = Column(String(128), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+scheduler = AsyncIOScheduler()
+
 @app.on_event("startup")
 async def on_startup():
     if engine:
@@ -35,6 +50,11 @@ async def on_startup():
         logger.info("✅ Tablas verificadas/creadas")
     else:
         logger.warning("⚠️ DATABASE_URL no configurada")
+    if not VERIFY_TOKEN:
+        logger.warning("⚠️ VERIFY_TOKEN vacio - Meta no podra verificar el webhook")
+    # El scheduler arranca aqui, ya con el event loop de uvicorn corriendo
+    scheduler.add_job(cleanup_inactive, 'interval', hours=1)
+    scheduler.start()
 
 def get_session() -> AsyncSession:
     return async_session()
@@ -60,11 +80,29 @@ async def verify_webhook(request: Request):
 # WEBHOOK WHATSAPP - Mensajes entrantes
 # ============================================================================
 
+_bg_tasks = set()      # referencias a tareas en segundo plano
+
+async def _is_duplicate(msg_id: str) -> bool:
+    """Registra el ID; True si ya se habia recibido (reintento de Meta)."""
+    if not msg_id:
+        return False
+    try:
+        async with get_session() as db:
+            db.add(ProcessedMessage(id=msg_id))
+            await db.commit()
+        return False
+    except IntegrityError:
+        return True
+    except Exception as e:
+        logger.error(f"No pude registrar mensaje {msg_id}: {e}")
+        return False
+
 @app.post("/webhook/whatsapp")
 async def handle_webhook(request: Request):
-    data = await request.json()
-    
+    """Responde 200 a Meta de inmediato y procesa el mensaje en segundo plano.
+    Nunca responde 500 (Meta reintentaria el mismo mensaje)."""
     try:
+        data = await request.json()
         entry = data.get("entry", [])
         if not entry:
             return JSONResponse({"status": "ok"})
@@ -80,11 +118,22 @@ async def handle_webhook(request: Request):
             return JSONResponse({"status": "ok"})
         
         message = messages[0]
-        from_phone = message.get("from")
-        message_type = message.get("type")
+        if await _is_duplicate(message.get("id")):
+            logger.info(f"🔁 Mensaje repetido ignorado: {message.get('id')}")
+            return JSONResponse({"status": "ok"})
         
-        logger.info(f"📱 Mensaje de {from_phone} | tipo: {message_type}")
-        
+        task = asyncio.create_task(_process_message(message))
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
+    except Exception as e:
+        logger.error(f"❌ Error webhook: {str(e)}", exc_info=True)
+    return JSONResponse({"status": "ok"})
+
+async def _process_message(message: dict):
+    from_phone = message.get("from")
+    message_type = message.get("type")
+    logger.info(f"📱 Mensaje de {from_phone} | tipo: {message_type}")
+    try:
         async with get_session() as db:
             if message_type == "text":
                 text_body = message.get("text", {}).get("body", "")
@@ -102,12 +151,8 @@ async def handle_webhook(request: Request):
             
             else:
                 logger.info(f"ℹ️ Tipo de mensaje no manejado todavía: {message_type}")
-        
-        return JSONResponse({"status": "ok"})
-    
     except Exception as e:
-        logger.error(f"❌ Error webhook: {str(e)}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        logger.error(f"❌ Error procesando mensaje de {from_phone}: {str(e)}", exc_info=True)
 
 # ============================================================================
 # WEBHOOK STRIPE - Confirmación de pago
@@ -186,10 +231,6 @@ async def pago_cancelado(request: Request):
 # Cleanup automático de inactivos
 # ============================================================================
 
-from datetime import datetime, timedelta
-from sqlalchemy import select, delete
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 async def cleanup_inactive():
     async with get_session() as db:
         now = datetime.utcnow()
@@ -228,12 +269,10 @@ async def cleanup_inactive():
             ConversationState.current_step == "COMPLETED"
         ))
         
+        await db.execute(delete(ProcessedMessage).where(ProcessedMessage.created_at < limit_7d))
+        
         await db.commit()
         logger.info(f"🧹 Cleanup ejecutado: {now}")
-
-scheduler = AsyncIOScheduler()
-scheduler.add_job(cleanup_inactive, 'interval', hours=1)
-scheduler.start()
 
 # ============================================================================
 # Health check

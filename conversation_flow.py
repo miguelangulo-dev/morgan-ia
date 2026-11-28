@@ -6,7 +6,7 @@ conversation_flow.py - Reescrito
 - Clave maestra de admin -> reporte de ventas por WhatsApp
 - Tarot en llamada separada (no trunca el JSON)
 """
-import os, re, logging
+import os, re, asyncio, logging
 from datetime import datetime
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 wa = WhatsAppClient()
 astro = AstroAgent()
 PRICE_MXN = 89
-ADMIN_KEY = os.getenv("MORGAN_ADMIN_KEY", "634r50fw4R!977$5283266")
+ADMIN_KEY = os.getenv("MORGAN_ADMIN_KEY", "")  # se configura en Railway
 TERMS_URL = "www.sincron-ia.com.mx"
 
 # ---------- Textos fijos ES/EN ----------
@@ -62,6 +62,7 @@ MSG = {
         "err": "Las runas se nublaron un momento ☁️... Intenta de nuevo escribiendo 'hola'.",
         "delivered": "Aqui esta tu destino completo 📜, {n}. 🧙🏻‍♀️ Gracias por confiar en Morgania.",
         "restart": "Escribe 'hola' para comenzar.",
+        "send_fail": "No pude enviarte el PDF. Toca 'Ya pague / Reenviar' para intentarlo de nuevo.",
         "inv_ask": "Requieres factura 📃 (CFDI)?",
         "b_inv_yes": "Si, quiero factura", "b_inv_no": "No, gracias",
         "inv_rfc": "Escribe tu RFC (12 o 13 caracteres).",
@@ -112,6 +113,7 @@ MSG = {
         "err": "The runes clouded for a moment☁️... Try again by typing 'hi'.",
         "delivered": "Here is your complete destiny 📜, {n}. Thank you for trusting Morgania.",
         "restart": "Type 'hi' to start.",
+        "send_fail": "I couldn't send your PDF. Tap 'I paid / Resend' to try again.",
         "inv_ask": "Do you need a Mexican tax invoice 📃 (CFDI)?",
         "b_inv_yes": "Yes, I need it", "b_inv_no": "No, thanks",
         "inv_rfc": "Type your RFC (12 or 13 characters).",
@@ -217,7 +219,7 @@ async def handle_incoming_text(db, phone, text):
     text_clean = (text or "").strip()
 
     # Clave maestra (admin) - antes de todo
-    if text_clean == ADMIN_KEY:
+    if ADMIN_KEY and text_clean == ADMIN_KEY:
         try:
             rep = await _build_admin_report(db)
         except Exception as e:
@@ -494,7 +496,8 @@ async def _generate_and_prepare_payment(db, state, phone):
                 if tarot.get("overall_message"):
                     reading["overall_message"] = tarot["overall_message"]
 
-        pdf_path, cover_used = build_natal_chart_pdf(full_name, birth_date, birth_time, reading)
+        pdf_path, cover_used = await asyncio.to_thread(
+            build_natal_chart_pdf, full_name, birth_date, birth_time, reading)
 
         chart = NatalChart(
             phone_number=phone, full_name=full_name, birth_date=birth_date, birth_time=birth_time,
@@ -527,9 +530,25 @@ async def deliver_paid_chart(db, chart):
     r = await db.execute(select(ConversationState).where(ConversationState.phone_number == chart.phone_number))
     st = r.scalar_one_or_none()
     lang = (st.collected_data or {}).get("lang","es") if st else "es"
-    await wa.send_document(chart.phone_number, chart.pdf_path,
+    # Railway borra los PDF en cada redeploy: si ya no existe, se regenera con los datos guardados
+    if not chart.pdf_path or not os.path.exists(chart.pdf_path):
+        try:
+            chart.pdf_path, _ = await asyncio.to_thread(
+                build_natal_chart_pdf, chart.full_name, chart.birth_date, chart.birth_time,
+                chart.interpretation_json or {})
+            await db.commit()
+            logger.info(f"PDF regenerado para chart {chart.id}")
+        except Exception as e:
+            logger.error(f"No pude regenerar PDF {chart.id}: {e}", exc_info=True)
+    r = await wa.send_document(chart.phone_number, chart.pdf_path or "",
         caption=T(lang, "delivered", n=(chart.full_name or "").split()[0]),
         filename="Morgan-IA.pdf")
+    if r is None or getattr(r, "status_code", 0) != 200:
+        # No se marca entregado: el cliente puede tocar "Ya pague / Reenviar"
+        logger.error(f"WhatsApp no entrego el PDF de chart {chart.id}")
+        await wa.send_buttons(chart.phone_number, T(lang, "send_fail"),
+            buttons=[{"id":"reenviar_link","title":T(lang,"b_paid")}])
+        return
     chart.delivered = True; await db.commit()
     if st: await save_state(db, st, step="COMPLETED")
 

@@ -5,7 +5,7 @@ agentes_claude_astro.py - Reescrito
 - Tarot: usa el resumen del libro tarot_egipcio_tirada_decision.md (tirada de decision, 1-4 cartas)
 - max_tokens amplio para que el JSON no se trunque; acentos permitidos
 """
-import os, json, re, logging
+import os, json, re, asyncio, logging
 import anthropic
 
 logger = logging.getLogger(__name__)
@@ -198,8 +198,10 @@ REGLAS (CRITICO - respeta el limite de caracteres de cada campo):
 
     async def _run_chart(self, birth_date, birth_time=None, birth_place=None, gender=None, lang="es"):
         try:
-            eph = _efemerides(birth_date, birth_time, birth_place, lang)
-            resp = self.client.messages.create(
+            # En hilo aparte para no congelar el servidor (geocoding + Claude tardan)
+            eph = await asyncio.to_thread(_efemerides, birth_date, birth_time, birth_place, lang)
+            resp = await asyncio.to_thread(
+                self.client.messages.create,
                 model=self.model, max_tokens=8000,
                 messages=[{"role": "user", "content":
                            self._chart_prompt(birth_date, birth_time, birth_place, gender, lang, eph)}],
@@ -266,7 +268,8 @@ REGLAS:
   ultima frase con punto. Nunca dejes una idea a la mitad ni frases inconclusas.
 - Solo JSON."""
         try:
-            resp = self.client.messages.create(
+            resp = await asyncio.to_thread(
+                self.client.messages.create,
                 model=self.model, max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}],
             )
